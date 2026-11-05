@@ -12,7 +12,15 @@ soulseek:
     account description
 downloads:
   downloads_folder: ./downloads # with Docker, set by the volume in docker-compose.yaml
-  share: True # if the downloads folder should be shared on Soulseek
+  # Where admins' songs are saved (Server page). Left empty, they go in the downloads folder too.
+  # With Docker, write the folder's path inside the containers (like /music) and mount it at that
+  # same path in both the app and slskd services in docker-compose.yaml.
+  server_folder:
+  share: True # if the downloads folder and server folder should be shared on Soulseek
+  # More folders to share on Soulseek, as slskd sees them. "[Name]/path" shows /path as Name.
+  # With Docker, mount each one into the slskd service in docker-compose.yaml (read only is fine).
+  extra_shares: []
+  #  - "[Movies]/movies"
   max_file_age: 7 # days. Files fetched for visitors' browsers are deleted after this long (0 keeps them).
                   # Songs the admins save into folders are never deleted.
 webserver:
@@ -43,3 +51,10 @@ captcha:
   # Off by default. To turn it on, set True and start with: sudo docker compose --profile captcha up -d
   # The model (about 1 GB) is downloaded into models/ the first time the llm container starts.
   enabled: False
+# Advanced: more slskd settings (https://github.com/slskd/slskd/blob/master/docs/config.md), merged
+# into the slskd.yml that Song-DL writes. Song-DL's own settings win where both set something.
+slskd: {}
+#  transfers:
+#    upload:
+#      slots: 20
+#      speed_limit: 10000 # KiB/s

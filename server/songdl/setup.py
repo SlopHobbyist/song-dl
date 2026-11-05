@@ -34,6 +34,28 @@ def api_key(cfg: Config):
     return key
 
 
+def shares(cfg: Config):
+    """The folders slskd shares. Song-DL's own are seen by slskd where the app sees them,
+    except the downloads folder, which slskd has at /app/downloads."""
+    dirs = []
+    if cfg.share:
+        dirs.append(SLSKD_DOWNLOADS)
+        if cfg.server_dir:
+            dirs.append(cfg.server_dir.as_posix())
+    return dirs + [d for d in cfg.extra_shares if d not in dirs]
+
+
+def merge(base, extra):
+    """extra with base on top: nested sections are merged, and base wins where both set a value."""
+    out = dict(extra)
+    for key, value in base.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge(value, out[key])
+        else:
+            out[key] = value
+    return out
+
+
 def render(cfg: Config):
     path = cfg.slskd_dir / 'slskd.yml'
     key, ui_password = _existing(path)
@@ -46,7 +68,7 @@ def render(cfg: Config):
         'remote_configuration': False,
         'flags': {'no_version_check': True},
         'directories': {'downloads': SLSKD_DOWNLOADS, 'incomplete': SLSKD_INCOMPLETE},
-        'shares': {'directories': [SLSKD_DOWNLOADS] if cfg.share else []},
+        'shares': {'directories': shares(cfg)},
         'transfers': {'download': {'destination': {'exists': 'rename'}}},
         'retention': {
             'search': 60,
@@ -72,6 +94,8 @@ def render(cfg: Config):
             'listen_port': cfg.listen_port,
         },
     }
+
+    data = merge(data, cfg.slskd_extra)
 
     cfg.slskd_dir.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix('.tmp')

@@ -162,3 +162,47 @@ def test_captcha_is_off_unless_turned_on(tmp_path):
         path.write_text(text, encoding='utf-8')
         got[name] = config.load(path).captcha
     assert got == {'example': False, 'no section': False, 'on': True}
+
+
+def test_slskd_yml_shares_and_extra_settings(tmp_path):
+    from pathlib import Path
+
+    import yaml
+
+    from songdl import config, setup
+    example = (Path(__file__).resolve().parents[2] / 'config.yaml.example').read_text(encoding='utf-8')
+    example = example.replace('YourUsername', 'someone').replace('YourPassword', 'hunter2hunter2')
+    example = example.replace('admin: change-me-please', 'admin: a-real-password')
+    path = tmp_path / 'config.yaml'
+
+    # The example: only the downloads folder is shared, and nothing extra is merged in
+    path.write_text(example, encoding='utf-8')
+    cfg = config.load(path)
+    assert cfg.server_dir is None and cfg.server_folder == cfg.downloads_dir
+    written = yaml.safe_load(setup.render(dataclasses_replace(cfg, slskd_dir=tmp_path / 'slskd')).read_text())
+    assert written['shares'] == {'directories': ['/app/downloads']}
+
+    custom = example.replace('  server_folder:\n', '  server_folder: /music\n')
+    custom = custom.replace('  extra_shares: []\n', '  extra_shares:\n    - "[Movies]/movies"\n    - /shows\n')
+    custom = custom.replace('slskd: {}\n', 'slskd:\n  shares:\n    filters: ["\\\\.ini$"]\n    directories: [/nope]\n'
+                            '  transfers:\n    upload:\n      slots: 20\n  web:\n    authentication:\n      password: nope\n')
+    path.write_text(custom, encoding='utf-8')
+    cfg = dataclasses_replace(config.load(path), slskd_dir=tmp_path / 'slskd')
+    assert cfg.server_dir == Path('/music') and cfg.extra_shares == ('[Movies]/movies', '/shows')
+    written = yaml.safe_load(setup.render(cfg).read_text())
+    assert written['shares'] == {'directories': ['/app/downloads', '/music', '[Movies]/movies', '/shows'],
+                                 'filters': ['\\.ini$']}
+    assert written['transfers'] == {'upload': {'slots': 20}, 'download': {'destination': {'exists': 'rename'}}}
+    # Song-DL's own settings win, and the API key and password are kept across runs
+    assert written['web']['authentication']['password'] != 'nope'
+    key = setup.api_key(cfg)
+    assert yaml.safe_load(setup.render(cfg).read_text())['web']['authentication']['api_keys']['songdl']['key'] == key
+
+    path.write_text(custom.replace('extra_shares:\n    - "[Movies]/movies"', 'extra_shares:\n    - 5'), encoding='utf-8')
+    with pytest.raises(ConfigError):
+        config.load(path)
+
+
+def dataclasses_replace(cfg, **changes):
+    import dataclasses
+    return dataclasses.replace(cfg, **changes)

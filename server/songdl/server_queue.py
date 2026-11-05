@@ -3,7 +3,8 @@
 Unlike a download for the browser, a queued song doesn't depend on anyone
 keeping a page open. The queue is written to disk and picked up again after a
 restart. Each item is one song in one format and ends up as
-downloads/<folder>/Artist - Title.ext.
+<server folder>/<folder>/Artist - Title.ext, the server folder
+being the downloads folder unless downloads.server_folder is set.
 
 Statuses: queued, downloading, paused, cancelled, failed, done.
 """
@@ -212,12 +213,14 @@ class ServerQueue:
     # Running
 
     def dest_dir(self, folder):
-        """Where a normalize_folder() name is, inside the downloads folder. The
-        name has no "..", drive letters or other way out, so it is only joined,
-        not resolved (resolving races with the folder being created)."""
+        """Where a normalize_folder() name is, inside the server folder (the
+        downloads folder unless downloads.server_folder is set). The name has no
+        "..", drive letters or other way out, so it is only joined, not resolved
+        (resolving races with the folder being created)."""
         if folder != normalize_folder(folder):
             raise UserError('That folder is outside the downloads folder.')
-        return self.cfg.downloads_dir.joinpath(*folder.split('/')) if folder else self.cfg.downloads_dir
+        root = self.cfg.server_folder
+        return root.joinpath(*folder.split('/')) if folder else root
 
     def _changed(self):
         self.dirty = True

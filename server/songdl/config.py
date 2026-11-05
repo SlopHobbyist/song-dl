@@ -42,6 +42,9 @@ class Config:
     admins: dict = field(default_factory=dict)   # username -> password; empty turns the admin pages off
     turnstile_site_key: str = ''
     turnstile_secret: str = ''
+    server_dir: Path = None   # where admins' songs are saved; None means the downloads folder
+    extra_shares: tuple = ()  # more folders slskd shares, as written in slskd.yml
+    slskd_extra: dict = field(default_factory=dict)   # merged into slskd.yml under Song-DL's own settings
     # captcha
     captcha: bool = False  # answer uploaders' "type download to prove you're human" messages
     llm_url: str = 'http://localhost:8081'
@@ -51,6 +54,10 @@ class Config:
     slskd_url: str = 'http://localhost:5030'
     certs_dir: Path = Path('certs')
     webui_dir: Path = Path('webui')
+
+    @property
+    def server_folder(self):
+        return self.server_dir or self.downloads_dir
 
     @property
     def queue_file(self):
@@ -110,6 +117,17 @@ def load(path=None):
     if bool(site_key) != bool(secret):
         raise ConfigError('Set both webserver.turnstile.site_key and secret_key, or neither.')
 
+    downloads_dir = _path(os.environ.get('SONGDL_DOWNLOADS') or dl.get('downloads_folder', 'downloads'), base)
+    server_dir = _path(dl['server_folder'], base) if dl.get('server_folder') else None
+    if server_dir == downloads_dir:
+        server_dir = None
+    extra_shares = dl.get('extra_shares') or []
+    if not isinstance(extra_shares, list) or not all(isinstance(s, str) and s.strip() for s in extra_shares):
+        raise ConfigError('downloads.extra_shares must be a list of folders, one "- /path" per line.')
+    slskd_extra = raw.get('slskd') or {}
+    if not isinstance(slskd_extra, dict):
+        raise ConfigError('slskd must be a section of slskd.yml settings, or left out.')
+
     bind = os.environ.get('SONGDL_BIND')
     ip, web_port = (bind.rsplit(':', 1) if bind else (web.get('ip', '0.0.0.0'), web.get('port', 8080)))
 
@@ -121,7 +139,7 @@ def load(path=None):
             username=username,
             password=password,
             description=str(slsk.get('description') or '').strip(),
-            downloads_dir=_path(os.environ.get('SONGDL_DOWNLOADS') or dl.get('downloads_folder', 'downloads'), base),
+            downloads_dir=downloads_dir,
             share=bool(dl.get('share', True)),
             max_file_age=float(dl.get('max_file_age', 7)),
             ip=str(ip),
@@ -133,6 +151,9 @@ def load(path=None):
             admins=_admins(web.get('admins')),
             turnstile_site_key=site_key,
             turnstile_secret=secret,
+            server_dir=server_dir,
+            extra_shares=tuple(s.strip() for s in extra_shares),
+            slskd_extra=slskd_extra,
             captcha=bool(captcha.get('enabled', False)),
             llm_url=os.environ.get('SONGDL_LLM_URL', 'http://localhost:8081').rstrip('/'),
             data_dir=_path(os.environ.get('SONGDL_DATA', 'data'), base),

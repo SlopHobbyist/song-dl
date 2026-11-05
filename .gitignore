@@ -114,6 +114,7 @@ htmlcov/
 
 # Song-DL runtime (config holds Soulseek and admin passwords)
 /config.yaml
+/docker-compose.override.yaml
 /certs/
 /data/
 /slskd/*

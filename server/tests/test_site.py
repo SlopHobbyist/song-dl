@@ -309,3 +309,20 @@ async def test_all_formats_into_a_new_nested_folder(admin, tmp_path):
     view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] in ('done', 'failed') for i in v['items']))
     assert [i['status'] for i in view['items']] == ['done'] * 4, [i['note'] for i in view['items']]
     assert len(list((tmp_path / 'downloads' / 'archive' / 'vinyl-rips').iterdir())) == 4
+
+
+async def test_queue_saves_into_a_separate_server_folder(tmp_path, fake):
+    client = await start_site(tmp_path, fake, server_dir=tmp_path / 'music')
+    try:
+        assert (await (await client.get('/api/session')).json())['serverFolder'] == 'music'
+        res = await client.post('/api/login', json={'username': 'admin', 'password': ADMIN['admin']})
+        assert res.status == 200
+        job = await search(client, 'daft punk digital love', ['flac'])
+        await client.post('/api/queue', json={'folder': 'mix', 'results': [job['results'][0]['id']]})
+        view = await wait_for(lambda: queue_view(client), lambda v: v['items'] and v['items'][0]['status'] in ('done', 'failed'))
+        assert view['items'][0]['status'] == 'done', view['items'][0]['note']
+        assert [p.name for p in (tmp_path / 'music' / 'mix').iterdir()] == ['Daft Punk - Digital Love.flac']
+        # Only the staging copy was in the downloads folder, and it's gone
+        assert list((tmp_path / 'downloads').iterdir()) == []
+    finally:
+        await client.close()

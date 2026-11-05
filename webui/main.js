@@ -131,7 +131,10 @@
     return ((bytesPerSecond || 0) / 1e6).toFixed(1) + ' MB/s';
   }
 
-  /* The folder under downloads/, with a trailing slash. */
+  /* The folder admins save songs into, as the server names it (see /api/session) */
+  var serverRoot = 'downloads/';
+
+  /* The folder under serverRoot, with a trailing slash. */
   function subfolder() {
     var field = $('#subfolder');
     var value = field ? field.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '';
@@ -225,11 +228,19 @@
       });
     });
 
-    /* Signed in? The admin button on the home page goes to the Server page. */
     var admin = $('#admin-link');
-    if (admin) {
+    var affixes = $$('[data-server-root]');
+    var queuePage = $('#queue-rows');
+    if (admin || affixes.length || queuePage) {
       api('GET', '/api/session').then(function (session) {
-        if (!session.user) return;
+        if (session.serverFolder) {
+          serverRoot = session.serverFolder + '/';
+          affixes.forEach(function (el) { setText(el, serverRoot); });
+          var folder = $('#subfolder');
+          if (folder) folder.dispatchEvent(new Event('input'));
+        }
+        /* Signed in? The admin button on the home page goes to the Server page. */
+        if (!admin || !session.user) return;
         admin.setAttribute('href', '/server/');
         admin.setAttribute('aria-label', 'Server');
         admin.setAttribute('title', 'Server');
@@ -410,7 +421,7 @@
       bind('quality', found.length === 1 ? found[0].quality : found.map(function (r) { return r.format + ' ' + r.quality; }).join(' · '));
       bind('size', formatSize(sumSizes(found)));
       bind('filename', found.map(function (r) { return r.filename; }).join(', '));
-      bind('dest', 'downloads/' + subfolder());
+      bind('dest', serverRoot + subfolder());
 
       /* Formats that weren't found, and copies that may be another version */
       var tags = $('.row.row-tight', result);
@@ -491,7 +502,7 @@
 
     var folder = $('#subfolder');
     if (folder) {
-      folder.addEventListener('input', function () { bind('dest', 'downloads/' + subfolder()); });
+      folder.addEventListener('input', function () { bind('dest', serverRoot + subfolder()); });
     }
 
     result.addEventListener('click', async function (event) {
@@ -584,7 +595,7 @@
       if (job.state === 'running') parts.push(left + ' left to scan');
       parts.push(escapeHtml(job.formats.join(' + ')));
       if (job.skipped) parts.push(job.skipped + ' row' + (job.skipped === 1 ? '' : 's') + ' without a song name skipped');
-      if (server) parts.push('<span class="text-mono">downloads/' + escapeHtml(subfolder()) + '</span>');
+      if (server) parts.push('<span class="text-mono">' + escapeHtml(serverRoot + subfolder()) + '</span>');
       $('[data-scan-summary]', results).innerHTML = parts.join(' · ');
       setText($('[data-scan-name]', results), job.name);
 
@@ -823,7 +834,7 @@
         case 'song':
           return '<td class="cell-song"><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(item.title) + '</span>' +
             '<span class="text-caption text-muted">' + escapeHtml((item.artist ? item.artist + ' · ' : '') + item.format) + '</span></div></td>';
-        case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml('downloads/' + item.folder) + '</td>';
+        case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml(serverRoot + item.folder) + '</td>';
         case 'by':       return '<td class="hide-lg">' + escapeHtml(item.by) + '</td>';
         case 'status':   return '<td class="cell-status"></td>';
         case 'progress': return '<td class="cell-progress"></td>';

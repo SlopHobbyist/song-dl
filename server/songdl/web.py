@@ -170,6 +170,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'user': request[USER],
             'adminEnabled': auth.enabled,
             'turnstileSiteKey': cfg.turnstile_site_key or None,
+            'serverFolder': cfg.server_folder.name or 'downloads',
         })
 
     async def login(request):
