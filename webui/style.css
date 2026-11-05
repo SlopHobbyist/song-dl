@@ -1,0 +1,151 @@
+/* Song-DL — site styles on top of the vendored Wavefront kit.
+   Only reads the kit's tokens; no literal colors, so light and dark both work. */
+
+/* ------------------------------------------------------------ Top bar */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.topnav { display: flex; align-items: center; gap: var(--space-1); }
+
+.topnav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-control);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-on-surface-muted);
+  font-size: var(--type-body-2-size);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+              color var(--duration-fast) var(--ease-standard);
+}
+.topnav-link:hover { background: var(--color-surface-hover); color: var(--color-on-surface); }
+.topnav-link[aria-current="page"] { background: var(--color-primary-soft); color: var(--color-on-surface); }
+
+.badge-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding-inline: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- Hero */
+.hero { padding-top: var(--space-10); padding-bottom: var(--space-6); }
+.hero-compact { padding-top: var(--space-8); }
+
+.search-form { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.search-hero {
+  height: calc(var(--size-control-lg) + var(--space-3));
+  font-size: var(--type-subtitle-size);
+}
+
+.search-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.fieldset-bare { border: 0; padding: 0; margin: 0; min-width: 0; background: none; }
+
+.search-sm { height: var(--size-control); max-width: 260px; }
+
+/* ----------------------------------------------------------- Result */
+.result-body { display: flex; gap: var(--space-5); align-items: flex-start; }
+.result-info { flex: 1 1 auto; min-width: 0; }
+
+.cover {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 128px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-primary-soft), var(--color-surface-sunken));
+  color: var(--color-primary-text);
+}
+
+.result .detail-list dd { min-width: 0; }
+
+.or-divider { margin-block: var(--space-4); }
+
+.section-tight { padding-block: var(--space-6); }
+
+/* ------------------------------------------------------ Scan table */
+.col-index  { width: 48px; }
+.col-action { width: 56px; }
+.table td.table-numeric.col-index { color: var(--color-on-surface-muted); }
+
+.song-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.is-missing .song-cell .text-medium { color: var(--color-on-surface-muted); }
+
+/* ------------------------------------------------------ Queue list */
+.queue-list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+}
+.queue-icon { color: var(--color-on-surface-muted); margin-top: 2px; }
+.queue-item[data-status="downloading"] .queue-icon { color: var(--color-primary-text); }
+.queue-main { flex: 1 1 auto; min-width: 0; }
+
+.queue-item.is-new { animation: song-dl-in var(--duration-base) var(--ease-standard); }
+@keyframes song-dl-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* ---------------------------------------------------------- All page */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.queue-table .col-progress { width: 260px; }
+.queue-table .col-actions  { width: 1%; }
+
+.status-cell { display: flex; flex-direction: column; gap: var(--space-2); min-width: 160px; }
+.status-cell > .tag { align-self: flex-start; }
+
+.table .row-actions { white-space: nowrap; text-align: end; }
+
+.progress-paused .progress-bar { background: var(--color-warning); }
+
+.table-toolbar { flex-wrap: wrap; }
+
+/* ------------------------------------------------------------ Login */
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - var(--size-topbar));
+}
+
+/* ------------------------------------------------------------ Small */
+@media (max-width: 720px) {
+  .hero { padding-top: var(--space-7); }
+  .result-body { flex-direction: column; }
+  .cover { width: 96px; }
+  .search-form-row > .button { flex: 1 1 auto; }
+  .queue-table .col-progress { width: auto; }
+  .search-sm { max-width: none; flex: 1 1 100%; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

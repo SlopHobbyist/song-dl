@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Sign In · Song-DL</title>
+<meta name="description" content="Sign in to queue downloads on the server.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="vendored/web-design-wavefront/design_language.css">
+<link rel="stylesheet" href="style.css">
+<script src="vendored/web-design-wavefront/design_language.js" defer></script>
+<script src="main.js" defer></script>
+</head>
+<body class="page" data-page="login">
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar topbar-dynamic">
+  <a class="topbar-title brand" href="index.html"><span class="icon text-primary">graphic_eq</span> Song-DL</a>
+  <div class="topbar-actions">
+    <span class="chip hide-sm">Mockup</span>
+    <button class="button button-icon" type="button" data-theme-toggle data-theme-label aria-pressed="false">
+      <span class="icon">dark_mode</span>
+    </button>
+  </div>
+</header>
+
+<main id="main" class="page-body auth-page">
+  <div class="auth">
+    <div class="auth-card">
+      <p class="auth-brand"><span class="icon">graphic_eq</span> Song-DL</p>
+      <h1 class="auth-title">Admin sign in</h1>
+      <p class="auth-lede">to download onto the server and manage the queue</p>
+
+      <form class="auth-form" id="login-form">
+        <div class="field">
+          <label class="field-label" for="login-user">Username</label>
+          <input class="input" id="login-user" type="text" autocomplete="username" value="admin">
+        </div>
+        <div class="field">
+          <label class="field-label" for="login-pass">Password</label>
+          <input class="input" id="login-pass" type="password" autocomplete="current-password" value="mockup-password">
+        </div>
+        <div class="auth-row">
+          <label class="choice"><input type="checkbox" checked><span class="choice-box"></span><span class="choice-label">Stay signed in</span></label>
+        </div>
+        <button class="button button-filled button-block" type="submit">Sign in</button>
+      </form>
+
+      <p class="auth-footer">Just want a song? <a class="link" href="index.html">Download without signing in</a></p>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>
