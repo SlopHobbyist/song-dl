@@ -5,6 +5,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+BUSY_TRIES = 8   # slskd answers 429 while it is busy with a similar request; try again this often
+
 
 class SlskdError(Exception):
     def __init__(self, message, status=None):
@@ -17,6 +19,10 @@ class Slskd:
         self.base = url + '/api/v0'
         self.api_key = api_key
         self.session = None
+        # slskd starts one search, and enqueues one batch of downloads, at a time: it refuses
+        # (429, "Only one concurrent operation is permitted") any other asked for meanwhile
+        self.search_lock = asyncio.Lock()
+        self.enqueue_lock = asyncio.Lock()
 
     async def start(self):
         self.session = aiohttp.ClientSession(
@@ -29,6 +35,15 @@ class Slskd:
             await self.session.close()
 
     async def request(self, method, path, body=None, params=None):
+        for attempt in range(BUSY_TRIES):
+            try:
+                return await self._request(method, path, body, params)
+            except SlskdError as e:
+                if e.status != 429 or attempt == BUSY_TRIES - 1:
+                    raise
+            await asyncio.sleep(0.2 * (attempt + 1))
+
+    async def _request(self, method, path, body, params):
         try:
             async with self.session.request(method, self.base + path, json=body, params=params) as res:
                 text = await res.text()
@@ -49,7 +64,8 @@ class Slskd:
     # Searches
 
     async def start_search(self, search_id, text, **options):
-        return await self.request('POST', '/searches', {'id': search_id, 'searchText': text, **options})
+        async with self.search_lock:
+            return await self.request('POST', '/searches', {'id': search_id, 'searchText': text, **options})
 
     async def get_search(self, search_id):
         return await self.request('GET', f'/searches/{search_id}')
@@ -66,11 +82,12 @@ class Slskd:
     # Downloads
 
     async def enqueue(self, username, filename, size, destination):
-        return await self.request('POST', '/transfers/downloads/batches', {
-            'username': username,
-            'files': [{'filename': filename, 'size': size}],
-            'options': {'destination': destination},
-        })
+        async with self.enqueue_lock:
+            return await self.request('POST', '/transfers/downloads/batches', {
+                'username': username,
+                'files': [{'filename': filename, 'size': size}],
+                'options': {'destination': destination},
+            })
 
     async def get_download(self, username, transfer_id):
         return await self.request('GET', f'/transfers/downloads/{quote(username, safe="")}/{transfer_id}')

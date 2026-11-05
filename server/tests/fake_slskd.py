@@ -10,6 +10,7 @@ until we message back "download".
 """
 
 import argparse
+import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
@@ -64,6 +65,8 @@ class Fake:
         self.speed = speed    # 1 = a download takes about 4 seconds; 0.25 is four times as long
         self.files = library()
         self.searches = {}
+        self.busy = set()        # kinds of request (searches, transfers) slskd is in the middle of
+        self.refused = 0
         self.transfers = {}
         self.logged_in = True
         self.captchas = {}       # username -> keyword they want messaged back before they upload
@@ -123,21 +126,47 @@ class Fake:
         return 'Completed, Succeeded', t['size']
 
     def write_file(self, t):
-        if t.get('written'):
-            return
-        t['written'] = True
+        if not t.get('written'):
+            t['written'] = asyncio.create_task(self._move_file(t))
+
+    async def _move_file(self, t):
+        """Like slskd, which says a download succeeded and then moves it out of its incomplete
+        folder: a copy, when that's on another mount, so the file shows up late and grows."""
         folder = self.downloads / t['destination']
-        folder.mkdir(parents=True, exist_ok=True)
         base = t['filename'].replace('\\', '/').rsplit('/', 1)[-1]
         fmt = base.rsplit('.', 1)[-1].lower()
-        head = HEADERS[fmt]
-        (folder / base).write_bytes(head + b'\0' * (t['size'] - len(head)))
+        data = HEADERS[fmt] + b'\0' * (t['size'] - len(HEADERS[fmt]))
+        await asyncio.sleep(0.3)
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / base).open('wb') as f:
+            f.write(data[:len(data) // 2])
+            f.flush()
+            await asyncio.sleep(0.3)
+            f.write(data[len(data) // 2:])
 
 
 def make_app(fake: Fake):
     async def server(request):
         return web.json_response({'isLoggedIn': fake.logged_in, 'state': 'Connected, LoggedIn'})
 
+    def one_at_a_time(handler):
+        """Like slskd: a search is started, and a download enqueued, one at a time. Any other
+        asked for meanwhile is refused."""
+        async def wrapped(request):
+            kind = request.path.split('/')[3]
+            if kind in fake.busy:
+                fake.refused += 1
+                return web.json_response('Only one concurrent operation is permitted. Wait until the previous '
+                                         'request completes', status=429)
+            fake.busy.add(kind)
+            try:
+                await asyncio.sleep(0.05)
+                return await handler(request)
+            finally:
+                fake.busy.discard(kind)
+        return wrapped
+
+    @one_at_a_time
     async def start_search(request):
         body = await request.json()
         fake.searches[body['id']] = {'text': body['searchText'], 'started': time.monotonic()}
@@ -150,11 +179,16 @@ def make_app(fake: Fake):
                                   'responseCount': len(fake.responses(s['text'])) if done else 0})
 
     async def search_responses(request):
-        return web.json_response(fake.responses(fake.searches[request.match_info['id']]['text']))
+        # Like slskd, which says a search is complete a moment before its responses are listed
+        s = fake.searches[request.match_info['id']]
+        if time.monotonic() - s['started'] < fake.search_seconds + 0.3:
+            return web.json_response([])
+        return web.json_response(fake.responses(s['text']))
 
     async def ok(request):
         return web.json_response({})
 
+    @one_at_a_time
     async def enqueue(request):
         body = await request.json()
         transfers = []

@@ -24,6 +24,7 @@ log = logging.getLogger('songdl')
 POLL_SECONDS = 1
 SEARCH_TIMEOUT_MS = 8000      # slskd ends the search after this long without new responses
 SEARCH_MAX_SECONDS = 30       # hard cap on a search, whatever slskd says
+RESPONSES_WAIT = 10           # seconds a finished search's responses may take to be listed
 RESPONSE_LIMIT = 500
 FILE_LIMIT = 10000
 QUEUE_WAIT = 90               # seconds to wait in a remote queue before trying another copy
@@ -33,6 +34,8 @@ MAX_ATTEMPTS = 5              # copies to try per download
 RESCAN_GAP = 120              # minimum seconds between share rescans
 MIN_FREE_BYTES = 2 * 10**9    # refuse new downloads when the disk has less room than this
 ASKED_WINDOW = 30 * 60        # seconds after asking an uploader for a file that we'll answer their captcha
+MOVE_WAIT = 30                # seconds a finished download may take to show up in its folder...
+MOVE_SETTLE = 5               # ...and to stop growing once it has
 LENGTH_TOLERANCE = 8          # seconds a copy may differ from the length in the CSV and still be preferred
 
 NOT_CONNECTED = 'Song-DL is not connected to the Soulseek network right now. Please try again in a minute.'
@@ -152,8 +155,17 @@ class Engine:
             if time.monotonic() - started > SEARCH_MAX_SECONDS:
                 await self.slskd.stop_search(search_id)
                 await asyncio.sleep(0.5)
+                s = await self.slskd.get_search(search_id)
                 break
-        return await self.slskd.search_responses(search_id) or []
+        # slskd can say a search is complete a moment before it has saved the responses, and
+        # then lists none (or a few). Read them again until most of those it counted are there.
+        expected = s.get('responseCount') or 0
+        deadline = time.monotonic() + RESPONSES_WAIT
+        while True:
+            responses = await self.slskd.search_responses(search_id) or []
+            if len(responses) * 2 >= expected or time.monotonic() > deadline:
+                return responses
+            await asyncio.sleep(0.25)
 
     async def find_track(self, track, fmt, status=None):
         """Searches Soulseek for a song of a playlist and returns the ranked
@@ -326,12 +338,21 @@ class Engine:
                         pass
 
     async def _finish(self, fetch: Fetch):
+        # slskd says a download succeeded before moving it out of its incomplete folder, a copy
+        # when that's another mount, so the file can show up late and still be growing
         folder = self.cfg.downloads_dir / fetch.id
-        files = [p for p in folder.iterdir() if p.is_file()] if folder.is_dir() else []
-        if not files:
+        started = changed = time.monotonic()
+        last = None
+        while True:
+            path, size = await asyncio.to_thread(_newest_file, folder)
+            now = time.monotonic()
+            if (path, size) != last:
+                last, changed = (path, size), now
+            if size == fetch.cand.size or now - started > MOVE_WAIT or (path and now - changed > MOVE_SETTLE):
+                break
+            await asyncio.sleep(0.25)
+        if not path:
             raise SlskdError('the finished file is missing', 500)
-        path = max(files, key=lambda p: p.stat().st_mtime)
-        size = path.stat().st_size
         if size != fetch.cand.size:
             fetch.error = f'The file from {fetch.cand.username} was incomplete'
         elif not valid_audio(path, fetch.cand.fmt):
@@ -390,6 +411,19 @@ class Engine:
             del self.fetches[key]
         for user in [u for u in self.asked if not self.asked_recently(u)]:
             del self.asked[user]
+
+
+def _newest_file(folder: Path):
+    """The newest file in the folder and its size, or (None, -1)."""
+    best, best_stat = None, None
+    try:
+        for p in folder.iterdir():
+            st = p.stat()
+            if p.is_file() and (best_stat is None or st.st_mtime > best_stat.st_mtime):
+                best, best_stat = p, st
+    except OSError:
+        pass
+    return best, (best_stat.st_size if best_stat else -1)
 
 
 def _transfer_error(user, message):
