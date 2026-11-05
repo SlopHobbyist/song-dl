@@ -5,6 +5,10 @@
 /* Several rules below give a container display:flex; keep [hidden] winning. */
 [hidden] { display: none !important; }
 
+/* The skip link moves focus to <main>; it is a target, not a control, so it
+   gets no ring. */
+main:focus { outline: none; }
+
 /* ------------------------------------------------------------ Top bar */
 .brand { color: inherit; text-decoration: none; }
 

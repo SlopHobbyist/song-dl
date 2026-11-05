@@ -19,6 +19,68 @@
     if (window.UI && UI.toast) UI.toast(message, { variant: variant });
   }
 
+  /* ------------------------------------------------------- Accessibility
+     Screen readers only announce changes inside a live region that already
+     exists, so both regions are created up front. The kit's toast region is
+     reused by UI.toast() when it is already in the page. */
+
+  var toastRegion = document.createElement('div');
+  toastRegion.className = 'toast-region';
+  toastRegion.setAttribute('role', 'status');
+  toastRegion.setAttribute('aria-live', 'polite');
+  document.body.appendChild(toastRegion);
+
+  var srStatus = document.createElement('div');
+  srStatus.className = 'visually-hidden';
+  srStatus.id = 'sr-status';
+  srStatus.setAttribute('role', 'status');
+  srStatus.setAttribute('aria-live', 'polite');
+  srStatus.setAttribute('aria-atomic', 'true');
+  document.body.appendChild(srStatus);
+
+  /* Politely announces a message that has no visible toast (results appearing,
+     a scan finishing). Clearing first makes a repeat of the same text speak. */
+  function announce(message) {
+    srStatus.textContent = '';
+    setTimeout(function () { srStatus.textContent = message; }, 50);
+  }
+
+  /* The icon font's glyph names are real text ("upload_file"), so a screen
+     reader would read them aloud. Hide every icon, including ones the page or
+     the kit add later. */
+  function hideIcons(root) {
+    var icons = root.nodeType === 1 && root.matches('.icon') ? [root] : [];
+    icons = icons.concat(Array.prototype.slice.call(root.querySelectorAll ? root.querySelectorAll('.icon:not([aria-hidden])') : []));
+    icons.forEach(function (icon) { icon.setAttribute('aria-hidden', 'true'); });
+  }
+  hideIcons(document.body);
+  new MutationObserver(function (mutations) {
+    mutations.forEach(function (m) {
+      Array.prototype.forEach.call(m.addedNodes, function (node) {
+        if (node.nodeType === 1) hideIcons(node);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  /* The file drop is a div acting as a button: give it the keys a button has. */
+  $$('.file-drop').forEach(function (zone) {
+    zone.addEventListener('keydown', function (event) {
+      if (event.target !== zone) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        zone.click();
+      }
+    });
+  });
+  $$('.file-drop input[type="file"]').forEach(function (input) {
+    input.setAttribute('tabindex', '-1');
+    input.setAttribute('aria-hidden', 'true');
+    input.addEventListener('change', function () {
+      var file = input.files && input.files[0];
+      if (file) announce(file.name + ' selected');
+    });
+  });
+
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -28,6 +90,12 @@
   /* Every ticked format checkbox in the group, in page order. */
   function checkedValues(name) {
     return $$('input[name="' + name + '"]:checked').map(function (input) { return input.value; });
+  }
+
+  /* Writes text only when it differs, so live regions stay quiet on no-ops. */
+  function setText(el, text) {
+    text = String(text);
+    if (el && el.textContent !== text) el.textContent = text;
   }
 
   /* "44.4 MB" + "48.6 MB" -> "93.0 MB" */
@@ -103,7 +171,10 @@
         $$('[data-panel]').forEach(function (panel) {
           panel.hidden = panel.getAttribute('data-panel') !== name;
         });
-        if (title) title.textContent = title.getAttribute('data-title-' + name);
+        if (title) {
+          title.textContent = title.getAttribute('data-title-' + name);
+          announce(title.textContent);
+        }
         hideResults();
         var focus = name === 'playlist' ? $('[data-panel="playlist"] .file-drop') : $('#q');
         if (focus) focus.focus();
@@ -139,6 +210,7 @@
       bind('filename', infos.map(function (i) { return song.artist + ' - ' + song.title + '.' + i.ext; }).join(', '));
       bind('dest', 'downloads/' + subfolder());
       result.hidden = false;
+      announce('Found ' + song.title + ' by ' + song.artist + ', ' + formats.join(' and ') + '.');
     });
 
     result.addEventListener('click', function (event) {
@@ -180,13 +252,17 @@
         return;
       }
 
+      if (button.getAttribute('aria-disabled') === 'true') return;
+
       results.hidden = true;
       loading.hidden = false;
-      button.disabled = true;
+      /* aria-disabled, not disabled: a disabled button drops keyboard focus. */
+      button.setAttribute('aria-disabled', 'true');
+      announce('Scanning playlist');
 
       setTimeout(function () {
         loading.hidden = true;
-        button.disabled = false;
+        button.removeAttribute('aria-disabled');
         $('[data-scan-name]', results).textContent = file ? file.name : 'road-trip-2026.csv';
         $('[data-scan-summary]', results).innerHTML =
           '<strong class="text-success">' + found.length + ' found</strong> · ' +
@@ -212,12 +288,13 @@
             '</tr>';
         }).join('');
         results.hidden = false;
+        announce('Scan complete. ' + found.length + ' songs found, ' + (PLAYLIST.length - found.length) + ' not found.');
       }, 900);
     });
 
     results.addEventListener('click', function (event) {
       var target = event.target.closest('[data-action]');
-      if (!target || target.disabled) return;
+      if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
       var action = target.getAttribute('data-action');
       var formats = checkedValues('csv-format');
       if (!formats.length) {
@@ -238,8 +315,12 @@
           toast('Downloading "' + song.title + '"', 'success');
         } else {
           formats.forEach(function (f) { queueSong({ title: song.title, artist: song.artist, format: f, size: song.size }); });
-          target.disabled = true;
-          target.innerHTML = '<span class="icon icon-sm text-success">check</span>';
+          /* Stay focusable (aria-disabled) so focus is not dropped. */
+          target.setAttribute('aria-disabled', 'true');
+          var queuedLabel = 'Queued ' + song.title;
+          target.setAttribute('aria-label', queuedLabel);
+          target.setAttribute('title', queuedLabel);
+          target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true">check</span>';
           toast('Queued "' + song.title + '"', 'success');
         }
       }
@@ -261,15 +342,25 @@
     done:        '<span class="tag tag-success">Done</span>'
   };
 
+  function rowName(row) {
+    var el = $('[data-name]', row);
+    return el ? el.textContent : 'song';
+  }
+
+  function progressText(row, value) {
+    return value + ' percent' + (row.getAttribute('data-status') === 'paused' ? ', paused' : '');
+  }
+
   function progressHtml(row) {
     var status = row.getAttribute('data-status');
     var value = +row.getAttribute('data-progress') || 0;
     if (status === 'downloading' || status === 'paused') {
       return '<div class="progress-cell">' +
         '<div class="progress-linear' + (status === 'paused' ? ' progress-paused' : '') + '" role="progressbar"' +
-          ' aria-valuenow="' + value + '" aria-valuemin="0" aria-valuemax="100" aria-label="Progress">' +
+          ' aria-valuenow="' + value + '" aria-valuemin="0" aria-valuemax="100"' +
+          ' aria-valuetext="' + progressText(row, value) + '" aria-label="Progress of ' + escapeHtml(rowName(row)) + '">' +
           '<div class="progress-bar" style="--value: ' + value + '%;"></div></div>' +
-        '<span class="text-caption text-muted progress-value">' + value + '%</span>' +
+        '<span class="text-caption text-muted progress-value" aria-hidden="true">' + value + '%</span>' +
       '</div>';
     }
     var note = {
@@ -281,19 +372,21 @@
     return '<span class="text-caption text-muted">' + escapeHtml(note) + '</span>';
   }
 
-  function actionButton(action, icon, label) {
+  function actionButton(action, icon, label, name) {
+    label = label + ' ' + escapeHtml(name);
     return '<button class="button button-icon button-icon-sm" type="button" data-action="' + action +
       '" aria-label="' + label + '" title="' + label + '"><span class="icon icon-sm">' + icon + '</span></button>';
   }
 
   function actionsHtml(row) {
     var status = row.getAttribute('data-status');
+    var name = rowName(row);
     var html = '';
-    if (status === 'downloading' || status === 'queued') html += actionButton('pause', 'pause', 'Pause');
-    if (status === 'paused' || status === 'cancelled') html += actionButton('resume', 'play_arrow', 'Resume');
-    if (status === 'failed') html += actionButton('resume', 'refresh', 'Retry');
-    if (status === 'downloading' || status === 'queued' || status === 'paused') html += actionButton('cancel', 'block', 'Cancel');
-    return html + actionButton('delete', 'delete', 'Delete');
+    if (status === 'downloading' || status === 'queued') html += actionButton('pause', 'pause', 'Pause', name);
+    if (status === 'paused' || status === 'cancelled') html += actionButton('resume', 'play_arrow', 'Resume', name);
+    if (status === 'failed') html += actionButton('resume', 'refresh', 'Retry', name);
+    if (status === 'downloading' || status === 'queued' || status === 'paused') html += actionButton('cancel', 'block', 'Cancel', name);
+    return html + actionButton('delete', 'delete', 'Delete', name);
   }
 
   function renderRow(row) {
@@ -357,6 +450,7 @@
       }
       var bar = $('.progress-linear', row);
       bar.setAttribute('aria-valuenow', value);
+      bar.setAttribute('aria-valuetext', progressText(row, value));
       $('.progress-bar', bar).style.setProperty('--value', value + '%');
       $('.progress-value', row).textContent = value + '%';
     });
@@ -410,14 +504,13 @@
         if (show) visible++;
       });
       Object.keys(counts).forEach(function (key) {
-        var el = $('[data-count="' + key + '"]');
-        if (el) el.textContent = counts[key];
+        setText($('[data-count="' + key + '"]'), counts[key]);
       });
       $$('.badge-count, .nav-item-trailing').forEach(function (el) {
-        el.textContent = counts.downloading + counts.queued;
+        setText(el, counts.downloading + counts.queued);
       });
       $('#queue-empty').hidden = visible > 0;
-      $('#queue-summary').textContent = visible + ' of ' + rows.length + ' items';
+      setText($('#queue-summary'), visible + ' of ' + rows.length + ' items');
     }
 
     $('#status-filter').addEventListener('click', function (event) {
@@ -434,6 +527,9 @@
       var row = button.closest('tr');
       var name = nameOf(row);
       var action = button.getAttribute('data-action');
+      /* The buttons are rebuilt when the status changes, which would drop
+         keyboard focus on the page. Put it on the row's first action. */
+      var keepFocus = action !== 'delete';
       if (action === 'pause') {
         setStatus(row, 'paused');
         toast('Paused "' + name + '"');
@@ -449,14 +545,22 @@
         UI.openDialog('dlg-delete');
       }
       refresh();
+      if (keepFocus) {
+        var next = $('.row-actions [data-action]', row);
+        if (next) next.focus();
+      }
     });
 
     dialog.addEventListener('close', function () {
       if (dialog.returnValue === 'delete' && pendingDelete) {
         var name = nameOf(pendingDelete);
+        var sibling = pendingDelete.nextElementSibling;
+        while (sibling && sibling.hidden) sibling = sibling.nextElementSibling;
         pendingDelete.remove();
         toast('Deleted "' + name + '"', 'success');
         refresh();
+        var target = sibling && $('.row-actions [data-action]', sibling);
+        (target || search).focus();
       }
       pendingDelete = null;
     });

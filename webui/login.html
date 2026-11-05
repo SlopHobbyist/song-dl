@@ -20,12 +20,12 @@
   <a class="topbar-title brand" href="index.html">Song-DL</a>
 </header>
 
-<main id="main" class="page-body auth-page">
+<main id="main" tabindex="-1" class="page-body auth-page">
   <div class="auth">
     <div class="auth-card auth-card-flat">
-      <h1 class="auth-title">Admin sign in</h1>
+      <h1 class="auth-title" id="login-title">Admin sign in</h1>
 
-      <form class="auth-form" id="login-form">
+      <form class="auth-form" id="login-form" aria-labelledby="login-title">
         <div class="field">
           <label class="field-label" for="login-user">Username</label>
           <input class="input" id="login-user" type="text" autocomplete="username" value="admin">

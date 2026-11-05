@@ -19,11 +19,11 @@
 <header class="topbar">
   <a class="topbar-title brand" href="index.html">Song-DL</a>
   <div class="topbar-actions">
-    <a class="button button-outlined button-sm" href="login.html"><span class="icon icon-sm">admin_panel_settings</span></a>
+    <a class="button button-outlined button-sm" href="login.html" aria-label="Admin sign in" title="Admin sign in"><span class="icon icon-sm" aria-hidden="true">admin_panel_settings</span></a>
   </div>
 </header>
 
-<main id="main" class="home">
+<main id="main" tabindex="-1" class="home">
   <div class="container container-narrow home-inner">
     <div class="home-spacer"></div>
 
@@ -32,12 +32,12 @@
     <!-- =================================================== Search a song -->
     <form class="search-form mt-6" id="search-form" data-panel="search" autocomplete="off">
       <div class="search search-hero">
-        <span class="icon">search</span>
+        <span class="icon" aria-hidden="true">search</span>
         <input type="search" id="q" name="q" placeholder="Artist | Song Title" aria-label="Song name">
       </div>
       <div class="search-form-row">
         <fieldset class="fieldset fieldset-bare">
-          <legend class="visually-hidden">Format</legend>
+          <legend class="visually-hidden">Download formats</legend>
           <div class="choice-group choice-group-row">
             <label class="choice"><input type="checkbox" name="format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
             <label class="choice"><input type="checkbox" name="format" value="AIFF" checked><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
@@ -46,23 +46,23 @@
           </div>
         </fieldset>
         <div class="row row-tight">
-          <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Playlist</button>
-          <button class="button button-filled button-lg" type="submit"><span class="icon">search</span> Search</button>
+          <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
+          <button class="button button-filled button-lg" type="submit"><span class="icon" aria-hidden="true">search</span> Search</button>
         </div>
       </div>
     </form>
 
     <!-- ================================================= Playlist upload -->
     <div class="search-form mt-6" id="playlist-form" data-panel="playlist" hidden>
-      <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV">
-        <span class="icon">upload_file</span>
+      <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV file">
+        <span class="icon" aria-hidden="true">upload_file</span>
         <span class="text-subtitle">Drag a playlist CSV here, or click to browse</span>
         <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
       </div>
       <div class="file-list" id="csv-list"></div>
       <div class="search-form-row">
         <fieldset class="fieldset fieldset-bare">
-          <legend class="visually-hidden">Playlist format</legend>
+          <legend class="visually-hidden">Playlist download formats</legend>
           <div class="choice-group choice-group-row">
             <label class="choice"><input type="checkbox" name="csv-format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
             <label class="choice"><input type="checkbox" name="csv-format" value="AIFF" checked><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
@@ -71,21 +71,21 @@
           </div>
         </fieldset>
         <div class="row row-tight">
-          <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Song</button>
-          <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and scan</button>
+          <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon" aria-hidden="true">search</span> Song</button>
+          <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon" aria-hidden="true">fact_check</span> Upload and scan</button>
         </div>
       </div>
     </div>
 
     <!-- ========================================================= Results -->
     <div class="home-results mt-6">
-      <div class="result scroll-y" id="search-result" hidden>
+      <div class="result scroll-y" id="search-result" role="region" aria-label="Search result" tabindex="0" hidden>
         <article class="card">
           <div class="card-body result-body">
-            <div class="cover" aria-hidden="true"><span class="icon icon-lg">album</span></div>
+            <div class="cover" aria-hidden="true"><span class="icon icon-lg" aria-hidden="true">album</span></div>
             <div class="result-info">
               <div class="row row-tight">
-                <span class="tag tag-success"><span class="icon icon-sm">check</span> Found</span>
+                <span class="tag tag-success"><span class="icon icon-sm" aria-hidden="true">check</span> Found</span>
                 <span class="tag" data-bind="format">FLAC</span>
               </div>
               <h2 class="text-heading-2 mt-2" data-bind="title">Paper Lanterns</h2>
@@ -100,25 +100,25 @@
             </div>
           </div>
           <div class="card-actions card-actions-end">
-            <button class="button button-filled" type="button" data-action="download-one"><span class="icon">download</span> Download</button>
+            <button class="button button-filled" type="button" data-action="download-one"><span class="icon" aria-hidden="true">download</span> Download</button>
           </div>
         </article>
       </div>
 
       <div id="scan-loading" hidden>
-        <div class="progress-linear is-indeterminate" role="progressbar" aria-label="Scanning"><div class="progress-bar"></div></div>
+        <div class="progress-linear is-indeterminate" role="progressbar" aria-label="Scanning playlist"><div class="progress-bar"></div></div>
       </div>
 
-      <div class="scan-results" id="scan-results" hidden>
+      <div class="scan-results" id="scan-results" role="region" aria-label="Playlist scan results" hidden>
         <div class="table-wrap scan-wrap">
           <div class="table-toolbar">
             <div class="grow">
               <span class="text-heading-3" data-scan-name>road-trip-2026.csv</span>
               <p class="text-caption text-muted" data-scan-summary></p>
             </div>
-            <button class="button button-filled" type="button" data-action="download-all"><span class="icon">download</span> Download all (9)</button>
+            <button class="button button-filled" type="button" data-action="download-all"><span class="icon" aria-hidden="true">download</span> Download all (9)</button>
           </div>
-          <div class="scan-scroll scroll-y">
+          <div class="scan-scroll scroll-y" role="region" aria-label="Playlist songs" tabindex="0">
             <table class="table table-hover table-sticky">
               <caption class="visually-hidden">Songs in the uploaded playlist and whether each was found</caption>
               <thead>
