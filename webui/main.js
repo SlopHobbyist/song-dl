@@ -25,9 +25,15 @@
     });
   }
 
-  function checkedValue(name) {
-    var input = $('input[name="' + name + '"]:checked');
-    return input ? input.value : 'FLAC';
+  /* Every ticked format checkbox in the group, in page order. */
+  function checkedValues(name) {
+    return $$('input[name="' + name + '"]:checked').map(function (input) { return input.value; });
+  }
+
+  /* "44.4 MB" + "48.6 MB" -> "93.0 MB" */
+  function sumSizes(sizes) {
+    var total = sizes.reduce(function (sum, s) { return sum + (parseFloat(s) || 0); }, 0);
+    return total.toFixed(1) + ' MB';
   }
 
   /* The folder under downloads/, with a trailing slash. */
@@ -40,8 +46,10 @@
   /* -------------------------------------------------------- Canned data */
 
   var FORMAT_INFO = {
+    WAV:  { quality: '16-bit / 44.1 kHz', size: '44.4 MB', ext: 'wav' },
+    AIFF: { quality: '16-bit / 44.1 kHz', size: '44.4 MB', ext: 'aiff' },
     FLAC: { quality: '24-bit / 96 kHz', size: '48.6 MB', ext: 'flac' },
-    WAV:  { quality: '16-bit / 44.1 kHz', size: '44.4 MB', ext: 'wav' }
+    MP3:  { quality: '320 kbps', size: '9.8 MB', ext: 'mp3' }
   };
 
   var PLAYLIST = [
@@ -113,18 +121,22 @@
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       var song = parseQuery($('#q').value.trim());
-      var format = checkedValue('format');
-      var info = FORMAT_INFO[format];
+      var formats = checkedValues('format');
+      if (!formats.length) {
+        toast('Pick at least one format', 'warning');
+        return;
+      }
+      var infos = formats.map(function (f) { return FORMAT_INFO[f]; });
       var bind = function (key, value) {
         var el = $('[data-bind="' + key + '"]', result);
         if (el) el.textContent = value;
       };
       bind('title', song.title);
       bind('artist', song.artist);
-      bind('format', format);
-      bind('quality', info.quality);
-      bind('size', info.size);
-      bind('filename', song.artist + ' - ' + song.title + '.' + info.ext);
+      bind('format', formats.join(' + '));
+      bind('quality', formats.length === 1 ? infos[0].quality : formats.map(function (f, i) { return f + ' ' + infos[i].quality; }).join(' · '));
+      bind('size', sumSizes(infos.map(function (i) { return i.size; })));
+      bind('filename', infos.map(function (i) { return song.artist + ' - ' + song.title + '.' + i.ext; }).join(', '));
       bind('dest', 'downloads/' + subfolder());
       result.hidden = false;
     });
@@ -138,7 +150,11 @@
       if (action === 'download-one') {
         toast('Downloading "' + title + '"', 'success');
       } else if (action === 'queue-one') {
-        queueSong({ title: title, artist: artist, format: checkedValue('format'), size: FORMAT_INFO[checkedValue('format')].size });
+        var formats = checkedValues('format');
+        if (!formats.length) { toast('Pick at least one format', 'warning'); return; }
+        formats.forEach(function (f) {
+          queueSong({ title: title, artist: artist, format: f, size: FORMAT_INFO[f].size });
+        });
         toast('Queued "' + title + '"', 'success');
       }
     });
@@ -158,7 +174,11 @@
 
     button.addEventListener('click', function () {
       var file = input && input.files && input.files[0];
-      var format = checkedValue('csv-format');
+      var format = checkedValues('csv-format').join(' + ');
+      if (!format) {
+        toast('Pick at least one format', 'warning');
+        return;
+      }
 
       results.hidden = true;
       loading.hidden = false;
@@ -199,19 +219,25 @@
       var target = event.target.closest('[data-action]');
       if (!target || target.disabled) return;
       var action = target.getAttribute('data-action');
-      var format = checkedValue('csv-format');
+      var formats = checkedValues('csv-format');
+      if (!formats.length) {
+        toast('Pick at least one format', 'warning');
+        return;
+      }
 
       if (action === 'download-all') {
         toast('Downloading ' + found.length + ' songs', 'success');
       } else if (action === 'queue-all') {
-        found.forEach(function (s) { queueSong({ title: s.title, artist: s.artist, format: format, size: s.size }); });
-        toast('Queued ' + found.length + ' songs', 'success');
+        found.forEach(function (s) {
+          formats.forEach(function (f) { queueSong({ title: s.title, artist: s.artist, format: f, size: s.size }); });
+        });
+        toast('Queued ' + found.length * formats.length + ' downloads', 'success');
       } else {
         var song = PLAYLIST[+target.closest('tr').getAttribute('data-index')];
         if (action === 'download-row') {
           toast('Downloading "' + song.title + '"', 'success');
         } else {
-          queueSong({ title: song.title, artist: song.artist, format: format, size: song.size });
+          formats.forEach(function (f) { queueSong({ title: song.title, artist: song.artist, format: f, size: song.size }); });
           target.disabled = true;
           target.innerHTML = '<span class="icon icon-sm text-success">check</span>';
           toast('Queued "' + song.title + '"', 'success');

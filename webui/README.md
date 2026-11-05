@@ -7,7 +7,7 @@ This is a website that allows users to download songs.
 index.html
 For regular non logged in users.
 - Type in a song name
-- Choose FLAC or WAV (radio buttons)
+- Choose any of WAV, AIFF, FLAC, MP3 (checkboxes; WAV and AIFF are on by default)
 - Press Search button
 - Shows found file info
 - Press Download button
