@@ -16,7 +16,7 @@ For regular non logged in users.
 or
 
 - Upload a playlist's song csv
-- Press Upload and Scan Button
+- Press Upload and scan button
 - Shows list of songs, if they were found on the server or not
 - Press Individual Download button or Download All button
 - Downloads from browser to their computer

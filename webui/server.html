@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Server Mode · Song-DL</title>
+<title>Server · Song-DL</title>
 <meta name="description" content="Queue songs and playlists to download onto the server.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendored/web-design-wavefront/design_language.css">
@@ -39,8 +39,8 @@
     </button>
   </div>
   <nav class="drawer-body">
-    <a class="nav-item" href="index.html"><span class="icon">download</span> Download</a>
-    <a class="nav-item" href="server.html" aria-current="page"><span class="icon">dns</span> Server mode</a>
+    <a class="nav-item" href="index.html"><span class="icon">download</span> Browser</a>
+    <a class="nav-item" href="server.html" aria-current="page"><span class="icon">dns</span> Server</a>
     <a class="nav-item" href="all.html"><span class="icon">queue_music</span> All <span class="nav-item-trailing">4</span></a>
   </nav>
   <div class="drawer-footer">
@@ -52,7 +52,7 @@
 
   <section class="hero">
     <div class="container container-narrow">
-      <h1 class="text-display-3 text-center" id="home-title" data-title-search="Queue to server" data-title-playlist="Queue a playlist">Download to server</h1>
+      <h1 class="text-display-3 text-center" id="home-title" data-title-search="Find a song" data-title-playlist="Scan a playlist">Find a song</h1>
 
       <div class="field mt-6">
         <label class="field-label" for="subfolder">Subfolder</label>
@@ -80,7 +80,7 @@
             </div>
           </fieldset>
           <div class="row row-tight">
-            <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Upload playlist</button>
+            <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Playlist</button>
             <button class="button button-filled button-lg" type="submit"><span class="icon">search</span> Search</button>
           </div>
         </div>
@@ -90,7 +90,7 @@
       <div class="search-form mt-5" id="playlist-form" data-panel="playlist" hidden>
         <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV">
           <span class="icon">upload_file</span>
-          <span class="text-subtitle">Drop a playlist CSV here, or click to browse</span>
+          <span class="text-subtitle">Drag a playlist CSV here, or click to browse</span>
           <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
         </div>
         <div class="file-list" id="csv-list"></div>
@@ -105,7 +105,7 @@
             </div>
           </fieldset>
           <div class="row row-tight">
-            <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Search a song</button>
+            <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Song</button>
             <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and scan</button>
           </div>
         </div>
@@ -177,7 +177,7 @@
     <div class="container container-narrow">
       <div class="row justify-between">
         <h2 class="text-heading-1">Your queue</h2>
-        <a class="button button-text" href="all.html">View All <span class="icon">arrow_forward</span></a>
+        <a class="button button-text" href="all.html">View all <span class="icon">arrow_forward</span></a>
       </div>
       <div class="table-wrap mt-4">
         <table class="table queue-table">
