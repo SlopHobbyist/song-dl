@@ -30,7 +30,7 @@ SLOTS = 3                 # songs downloading at once
 KEPT_COPIES = 5           # copies of each song remembered in the queue file
 FINISHED_KEEP_DAYS = 30   # finished items disappear from the list after this long
 TICK_SECONDS = 2
-MAX_ITEMS = 2000
+MAX_ITEMS = 25_000       # a couple of big playlist imports, with room to spare
 MAX_FOLDER = 120
 MAX_DEPTH = 4
 
@@ -199,13 +199,28 @@ class ServerQueue:
 
     # Views
 
-    def view(self):
-        items = [i.view() for i in self.items.values()]
+    def summary(self):
+        """Just the numbers, for the count of active downloads in the menu."""
         return {
-            'items': items,
-            'active': sum(i['status'] in ACTIVE for i in items),
-            'speed': sum(i['speed'] or 0 for i in items if i['status'] == 'downloading'),
+            'active': self.active_count(),
+            'speed': sum(i.speed or 0 for i in self.items.values() if i.status == 'downloading'),
         }
+
+    def view(self, by=None, recent=None):
+        """Every item, or only `by`'s. With `recent`, only that many of the songs
+        still waiting and that many of the latest finished ones are listed (plus
+        everything downloading or paused), so a big import doesn't send thousands
+        of rows; `more` says how many were left out."""
+        items = [i for i in self.items.values() if by is None or i.by == by]
+        more = 0
+        if recent is not None:
+            ended = [i for i in items if i.status in ('done', 'failed', 'cancelled')]
+            keep = {i.id for i in sorted(ended, key=lambda i: i.finished or i.created)[-recent:]}
+            keep |= {i.id for i in [i for i in items if i.status == 'queued'][:recent]}
+            shown = [i for i in items if i.status in ('downloading', 'paused') or i.id in keep]
+            more = len(items) - len(shown)
+            items = shown
+        return {'items': [i.view() for i in items], 'more': more, **self.summary()}
 
     def active_count(self):
         return sum(i.status in ACTIVE for i in self.items.values())

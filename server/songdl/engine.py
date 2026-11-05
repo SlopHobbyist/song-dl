@@ -8,11 +8,14 @@ uploader fails, keeps us queued too long, or stalls.
 """
 
 import asyncio
+import heapq
+import itertools
 import logging
 import re
 import shutil
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 from . import matching
@@ -37,6 +40,13 @@ ASKED_WINDOW = 30 * 60        # seconds after asking an uploader for a file that
 MOVE_WAIT = 30                # seconds a finished download may take to show up in its folder...
 MOVE_SETTLE = 5               # ...and to stop growing once it has
 LENGTH_TOLERANCE = 8          # seconds a copy may differ from the length in the CSV and still be preferred
+# The Soulseek server bans clients that search too fast (for about 30 minutes). These are
+# slsk-batchdl's long-standing safe defaults: at most 34 searches in any 220 seconds.
+SEARCHES_PER_WINDOW = 34
+SEARCH_WINDOW = 220
+# Who goes first when searches have to wait: a visitor's single search, then a playlist
+# scan someone is watching, then an admin's background import.
+INTERACTIVE, SCAN, IMPORT = 0, 1, 2
 
 NOT_CONNECTED = 'Song-DL is not connected to the Soulseek network right now. Please try again in a minute.'
 UNREACHABLE = 'Song-DL lost contact with its Soulseek client. Please try again in a minute.'
@@ -78,10 +88,57 @@ class Fetch:
         return self.phase not in ('done', 'failed')
 
 
+class SearchLimiter:
+    """Keeps searches under SEARCHES_PER_WINDOW in any SEARCH_WINDOW seconds,
+    across the whole site. Waiting searches start in priority order, then in
+    the order they asked."""
+
+    def __init__(self, per_window, window):
+        self.per_window = per_window
+        self.window = window
+        self.started = deque()   # monotonic times of the searches in the window
+        self.waiting = []        # heap of (priority, ticket)
+        self.tickets = itertools.count()
+
+    def _prune(self, now):
+        while self.started and now - self.started[0] >= self.window:
+            self.started.popleft()
+
+    def wait_estimate(self):
+        """Seconds until a search could start now, ignoring anyone already waiting."""
+        now = time.monotonic()
+        self._prune(now)
+        if len(self.started) < self.per_window:
+            return 0
+        return self.window - (now - self.started[0])
+
+    async def acquire(self, priority=INTERACTIVE, waiting=None):
+        """Returns once this search may start. `waiting(seconds)` is called if it has to wait."""
+        me = (priority, next(self.tickets))
+        heapq.heappush(self.waiting, me)
+        told = False
+        try:
+            while True:
+                now = time.monotonic()
+                self._prune(now)
+                if self.waiting[0] == me and len(self.started) < self.per_window:
+                    self.started.append(now)
+                    return
+                if waiting and not told:
+                    told = True
+                    waiting(self.wait_estimate())
+                await asyncio.sleep(0.25 if self.waiting[0] != me else
+                                    min(1.0, max(0.05, self.window - (now - self.started[0]))))
+        finally:
+            self.waiting.remove(me)
+            heapq.heapify(self.waiting)
+
+
 class Engine:
     def __init__(self, cfg, slskd: Slskd):
         self.cfg = cfg
         self.slskd = slskd
+        self.limiter = SearchLimiter(SEARCHES_PER_WINDOW, SEARCH_WINDOW)
         self.fetches = {}   # (username, filename) -> Fetch
         self.tasks = set()
         self.rescan_pending = False
@@ -124,9 +181,15 @@ class Engine:
 
     # Search
 
-    async def search(self, query, fmt, status=None):
+    async def search(self, query, fmt, status=None, priority=INTERACTIVE):
         """Searches Soulseek for the query and returns a matching.Ranking of
         the files of one format. `status(text)` is told how the search is going."""
+        def waiting(seconds):
+            if status:
+                status('Waiting for a turn to search. Soulseek limits how often we can search'
+                       + (f' (about {round(seconds)} s)' if seconds >= 1 else ''))
+
+        await self.limiter.acquire(priority, waiting)
         search_id = str(uuid.uuid4())
         await self.slskd.start_search(
             search_id, matching.search_text(query, fmt),
@@ -167,15 +230,15 @@ class Engine:
                 return responses
             await asyncio.sleep(0.25)
 
-    async def find_track(self, track, fmt, status=None):
+    async def find_track(self, track, fmt, status=None, priority=SCAN):
         """Searches Soulseek for a song of a playlist and returns the ranked
         copies, or raises UserError('No match found')."""
-        cands = (await self.search(track.query, fmt, status)).candidates
+        cands = (await self.search(track.query, fmt, status, priority)).candidates
         if not cands and track.artist:
             # Soulseek blocks searches for some artists. Search the title alone and
             # keep only files whose path mentions the artist.
             wanted = set(matching.tokens(track.artist))
-            alone = (await self.search(track.title_query, fmt, status)).candidates
+            alone = (await self.search(track.title_query, fmt, status, priority)).candidates
             cands = [c for c in alone if wanted & set(matching.tokens(c.filename))]
         # A remix is only acceptable if the playlist asks for one
         cands = [c for c in cands if c.relevance >= 1]
@@ -405,6 +468,8 @@ class Engine:
             await coro
         except SlskdError as e:
             log.debug('ignored slskd error: %s', e)
+        except RuntimeError as e:   # the session was closed: shutting down
+            log.debug('ignored: %s', e)
 
     def prune(self):
         for key in [k for k, f in self.fetches.items() if not f.active and not f.observers

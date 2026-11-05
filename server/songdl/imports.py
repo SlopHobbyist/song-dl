@@ -1,0 +1,376 @@
+"""Playlist imports: an admin's whole playlist, searched song by song in the
+background, each song put in the server queue as soon as it is found.
+
+A browser scan (jobs.ScanJob) only lives while its page is open and is meant
+for a few hundred songs. An import is for thousands: it doesn't need a page
+open, it is written to disk and carries on after a restart, and the songs it
+finds go straight into the server queue, so nothing it found can expire.
+
+It is slow on purpose. Soulseek bans clients that search too fast, so every
+search waits its turn in the engine's SearchLimiter, behind visitors' searches
+and scans. Expect about 9 searches a minute: one per song and format, and a
+second one when a search for the artist comes back empty.
+
+States: running, paused, done, cancelled. Songs: pending, searching, found, missing.
+"""
+
+import asyncio
+import csv
+import io
+import json
+import logging
+import os
+import secrets
+import time
+
+from .engine import IMPORT, SEARCH_WINDOW, SEARCHES_PER_WINDOW, Engine
+from .errors import UserError
+from .jobs import Entry
+from .playlist import Track
+from .server_queue import ServerQueue, normalize_folder
+from .slskd import SlskdError
+
+log = logging.getLogger('songdl')
+
+MAX_TRACKS = 10_000      # Spotify's own limit on a playlist
+MAX_IMPORTS = 50         # kept in the list, finished ones included
+WORKERS = 3              # songs searched at once; the search limit sets the real pace
+RETRY_SECONDS = 30       # wait after Soulseek or slskd goes away
+TICK_SECONDS = 2
+SEARCHES_PER_SONG = 1.15  # one per format, plus the odd second search for the title alone
+
+
+class ImportTrack:
+    __slots__ = ('track', 'state', 'found', 'note')
+
+    def __init__(self, track: Track, state='pending', found=(), note=''):
+        self.track = track
+        self.state = state
+        self.found = list(found)   # formats queued
+        self.note = note
+
+    def to_list(self):
+        t = self.track
+        return [t.title, t.artist, t.album, t.duration, self.state, self.found, self.note]
+
+    @classmethod
+    def from_list(cls, row):
+        title, artist, album, duration, state, found, note = row
+        if state == 'searching':
+            state = 'pending'
+        return cls(Track(title, artist, album, duration), state, found, note)
+
+
+class Import:
+    def __init__(self, name, formats, folder, by, tracks, skipped=0):
+        self.id = secrets.token_urlsafe(9)
+        self.name = name
+        self.formats = formats
+        self.folder = folder
+        self.by = by
+        self.tracks = tracks           # [ImportTrack]
+        self.skipped = skipped         # CSV rows without a song name
+        self.state = 'running'
+        self.note = ''
+        self.created = int(time.time() * 1000)
+        self.finished = None
+        self.next = 0                  # index of the first song that might still be pending
+        # This run's pace, for the time left
+        self.run_started = None
+        self.run_done = 0
+
+    def counts(self):
+        c = {'pending': 0, 'searching': 0, 'found': 0, 'missing': 0}
+        for t in self.tracks:
+            c[t.state] += 1
+        return c
+
+    def take(self):
+        """The next pending song, marked as being searched, or None."""
+        while self.next < len(self.tracks):
+            t = self.tracks[self.next]
+            self.next += 1
+            if t.state == 'pending':
+                t.state = 'searching'
+                return t
+        return None
+
+    def eta(self, left):
+        if not left or self.state != 'running':
+            return None
+        if self.run_done >= 5 and self.run_started:
+            per_song = (time.monotonic() - self.run_started) / self.run_done
+        else:
+            per_song = len(self.formats) * SEARCHES_PER_SONG * SEARCH_WINDOW / SEARCHES_PER_WINDOW
+        return round(left * per_song)
+
+    def view(self):
+        c = self.counts()
+        left = c['pending'] + c['searching']
+        return {
+            'id': self.id,
+            'name': self.name,
+            'formats': [f.upper() for f in self.formats],
+            'folder': self.folder + '/' if self.folder else '',
+            'by': self.by,
+            'state': self.state,
+            'note': self.note,
+            'total': len(self.tracks),
+            'found': c['found'],
+            'missing': c['missing'],
+            'left': left,
+            'skipped': self.skipped,
+            'queued': sum(len(t.found) for t in self.tracks),
+            'current': [t.track.label for t in self.tracks if t.state == 'searching'][:WORKERS],
+            'eta': self.eta(left),
+            'created': self.created,
+            'finished': self.finished,
+        }
+
+    def missing_csv(self):
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator='\r\n')
+        writer.writerow(['Track Name', 'Artist Name(s)', 'Album Name', 'Duration (ms)', 'Not found in'])
+        for t in self.tracks:
+            lacking = [f for f in self.formats if f not in t.found]
+            if t.state in ('found', 'missing') and lacking:
+                d = t.track.duration
+                writer.writerow([t.track.title, t.track.artist, t.track.album, d * 1000 if d else '',
+                                 ' '.join(f.upper() for f in lacking)])
+        return '﻿' + out.getvalue()
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name, 'formats': self.formats, 'folder': self.folder, 'by': self.by,
+                'state': self.state, 'note': self.note, 'created': self.created, 'finished': self.finished,
+                'skipped': self.skipped, 'tracks': [t.to_list() for t in self.tracks]}
+
+    @classmethod
+    def from_dict(cls, d):
+        imp = cls(d['name'], d['formats'], d['folder'], d['by'],
+                  [ImportTrack.from_list(r) for r in d['tracks']], d.get('skipped', 0))
+        imp.id, imp.state, imp.note = d['id'], d['state'], d.get('note') or ''
+        imp.created, imp.finished = d['created'], d.get('finished')
+        return imp
+
+
+class Importer:
+    def __init__(self, cfg, engine: Engine, queue: ServerQueue):
+        self.cfg = cfg
+        self.engine = engine
+        self.queue = queue
+        self.imports = {}          # id -> Import, oldest first
+        self.tasks = {}            # id -> {asyncio tasks searching its songs}
+        self.wake = asyncio.Event()
+        self.dirty = False
+        self.saved_text = None
+        self.offline_until = 0
+
+    # Adding and controlling
+
+    def add(self, name, formats, folder, by, tracks, skipped=0):
+        folder = normalize_folder(folder)
+        self.queue.dest_dir(folder)   # refuses anything that would leave the downloads folder
+        if len(tracks) > MAX_TRACKS:
+            raise UserError(f'That playlist has {len(tracks)} songs. An import can have up to {MAX_TRACKS}.')
+        if sum(i.state in ('running', 'paused') for i in self.imports.values()) >= MAX_IMPORTS:
+            raise UserError('There are too many imports going. Let some finish or delete them first.', 409)
+        imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped)
+        self.imports[imp.id] = imp
+        self._trim()
+        self._changed()
+        log.info('%s imported %r: %d songs into %r (%s)', by, name, len(tracks), folder, ','.join(formats))
+        return imp
+
+    def get(self, import_id):
+        imp = self.imports.get(import_id)
+        if not imp:
+            raise UserError('That import no longer exists.', 404)
+        return imp
+
+    def pause(self, imp):
+        if imp.state == 'running':
+            imp.state, imp.note = 'paused', ''
+            self._interrupt(imp)
+            self._changed()
+
+    def resume(self, imp):
+        if imp.state in ('paused', 'cancelled'):
+            imp.state, imp.note, imp.finished, imp.next = 'running', '', None, 0
+            imp.run_started, imp.run_done = None, 0
+            self._changed()
+
+    def cancel(self, imp):
+        if imp.state in ('running', 'paused'):
+            imp.state, imp.note = 'cancelled', ''
+            imp.finished = int(time.time() * 1000)
+            self._interrupt(imp)
+            self._changed()
+
+    def delete(self, imp):
+        """Forgets the import. Songs it already queued stay in the queue."""
+        self._interrupt(imp)
+        self.imports.pop(imp.id, None)
+        self._changed()
+
+    def _interrupt(self, imp):
+        for task in list(self.tasks.get(imp.id, ())):
+            task.cancel()
+        for t in imp.tracks:
+            if t.state == 'searching':
+                t.state = 'pending'
+        imp.next = 0
+
+    def _trim(self):
+        ended = [i for i in self.imports.values() if i.state in ('done', 'cancelled')]
+        for imp in ended[:max(0, len(self.imports) - MAX_IMPORTS)]:
+            del self.imports[imp.id]
+
+    def view(self):
+        return {'imports': [i.view() for i in reversed(self.imports.values())]}
+
+    def _changed(self):
+        self.dirty = True
+        self.wake.set()
+
+    # Running
+
+    async def run(self):
+        """Keeps WORKERS songs being searched, and the imports file current."""
+        while True:
+            try:
+                await asyncio.wait_for(self.wake.wait(), TICK_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+            self.wake.clear()
+            try:
+                await self._dispatch()
+                self.save()
+            except Exception:
+                log.exception('import loop failed')
+
+    def _busy(self):
+        return sum(len(tasks) for tasks in self.tasks.values())
+
+    async def _dispatch(self):
+        for imp in self.imports.values():
+            if imp.state == 'running' and not any(t.state in ('pending', 'searching') for t in imp.tracks):
+                imp.state, imp.finished = 'done', int(time.time() * 1000)
+                log.info('import %r finished', imp.name)
+                self.dirty = True
+        if self._busy() >= WORKERS or time.monotonic() < self.offline_until:
+            return
+        running = [i for i in self.imports.values() if i.state == 'running']
+        if not running:
+            return
+        if not await self.engine.connected():
+            self.offline_until = time.monotonic() + RETRY_SECONDS
+            return
+        # Oldest import first; a newer one gets the slots the older one can't use
+        for imp in running:
+            # (It may have been paused while the connection was checked)
+            while imp.state == 'running' and self._busy() < WORKERS:
+                t = imp.take()
+                if not t:
+                    break
+                if imp.run_started is None:
+                    imp.run_started = time.monotonic()
+                task = self.engine.spawn(self._search(imp, t))
+                self.tasks.setdefault(imp.id, set()).add(task)
+                task.add_done_callback(lambda task, i=imp.id: self._ended(i, task))
+                self.dirty = True
+
+    def _ended(self, import_id, task):
+        tasks = self.tasks.get(import_id)
+        if tasks:
+            tasks.discard(task)
+            if not tasks:
+                del self.tasks[import_id]
+        self.wake.set()
+
+    async def _search(self, imp: Import, t: ImportTrack):
+        try:
+            for fmt in imp.formats:
+                if fmt in t.found:
+                    continue
+                try:
+                    cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
+                except UserError as e:
+                    if e.status != 400:   # 400 is "No match found"
+                        log.info('import search for %r failed: %s', t.track.label, e)
+                    continue
+                entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
+                try:
+                    self.queue.add([entry], imp.folder, imp.by)
+                except UserError as e:
+                    # The queue is full, say: stop until someone makes room
+                    imp.state, imp.note = 'paused', str(e)
+                    t.state = 'pending'
+                    imp.next = 0
+                    log.warning('import %r paused: %s', imp.name, e)
+                    return
+                t.found.append(fmt)
+            t.state = 'found' if t.found else 'missing'
+            t.note = ''
+            imp.run_done += 1
+        except SlskdError as e:
+            log.warning('import %r: slskd error on %r: %s', imp.name, t.track.label, e)
+            self._retry_later(imp, t)
+        except asyncio.CancelledError:
+            if t.state == 'searching':
+                t.state = 'pending'
+            raise
+        except Exception:
+            log.exception('import search for %r crashed', t.track.label)
+            t.state, t.note = 'missing', 'Something went wrong searching for this song'
+        finally:
+            self._changed()
+
+    def _retry_later(self, imp, t):
+        t.state = 'pending'
+        imp.next = 0
+        self.offline_until = time.monotonic() + RETRY_SECONDS
+
+    # Remembering imports, so they survive a restart
+
+    def load(self):
+        try:
+            data = json.loads(self.cfg.imports_file.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as e:
+            log.warning('can\'t read %s: %s', self.cfg.imports_file, e)
+            return
+        for d in data.get('imports', []):
+            try:
+                imp = Import.from_dict(d)
+            except Exception as e:
+                log.warning('skipped a saved import: %r', e)
+                continue
+            self.imports[imp.id] = imp
+        running = sum(i.state == 'running' for i in self.imports.values())
+        if self.imports:
+            log.info('loaded %d playlist import(s), %d running', len(self.imports), running)
+
+    def save(self):
+        if not self.dirty:
+            return
+        text = json.dumps({'version': 1, 'imports': [i.to_dict() for i in self.imports.values()]})
+        self.dirty = False
+        if text == self.saved_text:
+            return
+        path = self.cfg.imports_file
+        tmp = path.with_name(path.name + '.tmp')
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(text, encoding='utf-8')
+            os.replace(tmp, path)
+            self.saved_text = text
+        except OSError as e:
+            self.dirty = True
+            log.warning('can\'t save %s: %s', path, e)
+
+    def shutdown(self):
+        for imp in self.imports.values():
+            self._interrupt(imp)
+        self.dirty = True
+        self.save()

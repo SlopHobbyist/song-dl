@@ -29,6 +29,8 @@ def fast(monkeypatch):
     monkeypatch.setattr('songdl.server_queue.TICK_SECONDS', 0.2)
     monkeypatch.setattr('songdl.web.FAIL_DELAY', 0)
     monkeypatch.setattr('songdl.captcha.POLL_SECONDS', 0.1)
+    monkeypatch.setattr(engine, 'SEARCHES_PER_WINDOW', 10_000)   # tests search far faster than Soulseek allows
+    monkeypatch.setattr('songdl.imports.TICK_SECONDS', 0.1)
 
 
 @pytest_asyncio.fixture

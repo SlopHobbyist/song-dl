@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from . import matching
-from .engine import LOW_DISK, UNREACHABLE, Engine, mb
+from .engine import LOW_DISK, SCAN, UNREACHABLE, Engine, mb
 from .errors import UserError
 from .playlist import Track
 from .slskd import SlskdError
@@ -146,6 +146,8 @@ class ScanTrack:
         self.found = {}      # format -> Entry
 
     def view(self, formats):
+        for entry in self.found.values():
+            entry.touch()   # kept while the scan is on screen, however long it took
         results = [self.found[f].view() for f in formats if f in self.found]
         return {
             'title': self.track.title,
@@ -302,7 +304,7 @@ class Manager:
             async with self.search_slots:
                 st.state = 'searching'
                 try:
-                    cands = await self.engine.find_track(st.track, fmt)
+                    cands = await self.engine.find_track(st.track, fmt, priority=SCAN)
                 except UserError as e:
                     if e.status != 400:   # 400 is "No match found"
                         log.warning('scan of %r stopped: %s', st.track.label, e)

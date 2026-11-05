@@ -251,7 +251,7 @@
         poll(async function () {
           if (signedOut) return;
           try {
-            setActiveCount((await api('GET', '/api/queue')).active);
+            setActiveCount((await api('GET', '/api/queue?summary=1')).active);
           } catch (e) {
             if (e.status !== 401) throw e;
             /* The session ended while the page was open */
@@ -346,12 +346,19 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
   }
 
+  /* The playlist the panel holds: the CSV read from a link, or the file chosen. */
+  function chosenPlaylist() {
+    var input = $('#csv-input');
+    return linked ? linked.file : input && input.files && input.files[0];
+  }
+
   function initPlaylistLink() {
     var field = $('#playlist-link');
     var list = $('#csv-list');
     var input = $('#csv-input');
     var zone = $('[data-panel="playlist"] .file-drop');
     var scanButton = $('#scan-button');
+    var importButton = $('#import-button');
     var q = $('#q');
     if (!field || !list || !scanButton) return;
 
@@ -360,6 +367,7 @@
       linked = null;
       field.value = '';
       setIdle(scanButton);
+      if (importButton) importButton.removeAttribute('aria-disabled');
     }
 
     function showReading() {
@@ -371,13 +379,14 @@
     }
 
     function showLinked() {
-      var tooBig = linked.total > linked.maxScan;
+      var limit = page === 'server' ? linked.maxImport : linked.maxScan;
+      var tooBig = linked.total > limit;
       list.innerHTML =
         '<div class="file-item">' +
           '<span class="icon icon-sm">queue_music</span>' +
           '<span class="grow text-truncate" title="' + escapeHtml(linked.name) + '">' + escapeHtml(linked.name) + '</span>' +
           '<span class="text-caption ' + (tooBig ? 'text-warning' : 'text-muted') + '"' +
-            (tooBig ? ' title="Scans are limited to ' + linked.maxScan + ' songs at a time"' : '') + '>' +
+            (tooBig ? ' title="' + (page === 'server' ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
             linked.total + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
           '<button class="button button-outlined button-sm" type="button" data-action="save-csv"' +
             ' aria-label="Download ' + escapeHtml(linked.file.name) + '" title="Save the playlist as a CSV, to scan later">' +
@@ -392,6 +401,7 @@
       if (input) input.value = '';
       showReading();
       setBusy(scanButton, 'Reading playlist');
+      if (importButton) importButton.setAttribute('aria-disabled', 'true');
       announce('Reading the playlist from Spotify');
       try {
         var res = await api('POST', '/api/playlist-link', { url: url });
@@ -401,16 +411,20 @@
           file: new File([res.csv], res.filename, { type: 'text/csv' }),
           name: res.name,
           total: res.total,
-          maxScan: res.maxScan
+          maxScan: res.maxScan,
+          maxImport: res.maxImport
         };
         showLinked();
         setIdle(scanButton);
-        announce(res.name + ': ' + res.total + ' songs. Ready to scan, or download the CSV.');
-        scanButton.focus();
+        if (importButton) importButton.removeAttribute('aria-disabled');
+        announce(res.name + ': ' + res.total + ' songs. Ready to ' + (importButton ? 'import or scan' : 'scan') +
+          ', or download the CSV.');
+        (importButton || scanButton).focus();
       } catch (e) {
         if (run !== linkRun) return;
         list.innerHTML = '';
         setIdle(scanButton);
+        if (importButton) importButton.removeAttribute('aria-disabled');
         toast(e.message, 'danger');
       }
     }
@@ -595,8 +609,13 @@
     if (!done.length) return false;
 
     if (zipName) {
-      var query = done.map(function (job) { return 'job=' + encodeURIComponent(job.id); }).join('&');
-      saveFile('/api/zip?' + query + '&name=' + encodeURIComponent(zipName));
+      try {
+        var zip = await api('POST', '/api/zip', { jobs: done.map(function (job) { return job.id; }), name: zipName });
+        saveFile(zip.url);
+      } catch (e) {
+        toast(e.message, 'danger');
+        return false;
+      }
     } else {
       for (var i = 0; i < done.length; i++) {
         if (i) await sleep(500);
@@ -844,7 +863,7 @@
 
     button.addEventListener('click', async function () {
       if (isBusy(button)) return;
-      var file = linked ? linked.file : input && input.files && input.files[0];
+      var file = chosenPlaylist();
       var formats = checkedValues('csv-format');
       if (!file) {
         toast('Choose a playlist CSV or paste a playlist link first', 'warning');
@@ -854,13 +873,11 @@
         toast('Pick at least one format', 'warning');
         return;
       }
-      if (linked && linked.total > linked.maxScan && file.size > 500 * 1024) {
-        toast('That playlist has ' + linked.total + ' songs. Scans are limited to ' + linked.maxScan +
-          ' at a time: download the CSV and split it into smaller files.', 'warning');
-        return;
-      }
-      if (file.size > 500 * 1024) {
-        toast('That file is too big. A playlist CSV should be well under 500 KB.', 'warning');
+      if (file.size > 500 * 1024 || (linked && linked.total > linked.maxScan)) {
+        var what = linked ? 'That playlist has ' + linked.total + ' songs.' : 'That file is too big.';
+        toast(what + (page === 'server'
+          ? ' A scan can have up to 300 songs. Use Import instead: it takes any size.'
+          : ' A scan can have up to 300 songs. Download the CSV and split it into smaller files.'), 'warning');
         return;
       }
 
@@ -990,6 +1007,199 @@
         }
       }
     });
+  }
+
+  /* --------------------------------------------------- Playlist imports
+     Server page: Import hands the whole playlist to the server, which searches
+     it in the background and queues each song as it is found. The Server and
+     All pages list the imports and their progress. */
+
+  function formatEta(seconds) {
+    if (seconds === null || seconds === undefined) return '';
+    if (seconds < 60) return 'under a minute left';
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return 'about ' + minutes + ' min left';
+    var hours = Math.floor(minutes / 60);
+    minutes = minutes % 60;
+    return 'about ' + hours + ' h' + (minutes ? ' ' + minutes + ' min' : '') + ' left';
+  }
+
+  function count(n) { return Number(n).toLocaleString(); }
+
+  var IMPORT_TAG = {
+    running:   '<span class="tag tag-info">Running</span>',
+    paused:    '<span class="tag tag-warning">Paused</span>',
+    cancelled: '<span class="tag tag-danger">Cancelled</span>',
+    done:      '<span class="tag tag-success">Done</span>'
+  };
+
+  var refreshImports = null;   // set by initImports, so a new import shows at once
+
+  function initImportButton() {
+    var button = $('#import-button');
+    if (!button) return;
+    button.addEventListener('click', async function () {
+      if (isBusy(button)) return;
+      var file = chosenPlaylist();
+      var formats = checkedValues('csv-format');
+      if (!file) {
+        toast('Choose a playlist CSV or paste a playlist link first', 'warning');
+        return;
+      }
+      if (!formats.length) {
+        toast('Pick at least one format', 'warning');
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        toast('That file is too big. A playlist CSV should be under 8 MB.', 'warning');
+        return;
+      }
+      setBusy(button, 'Importing');
+      try {
+        var imp = await api('POST', '/api/imports', {
+          csv: await file.text(),
+          name: linked ? linked.name : file.name,
+          formats: formats,
+          folder: $('#subfolder') ? $('#subfolder').value : ''
+        });
+        toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder, 'success');
+        if (refreshImports) await refreshImports();
+        var section = $('#imports-section');
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        toast(e.message, 'danger');
+      } finally {
+        setIdle(button);
+      }
+    });
+  }
+
+  function importActions(imp) {
+    var name = imp.name;   // actionButton escapes it
+    var html = '';
+    if (imp.state === 'running') html += actionButton('pause', 'pause', 'Pause', name);
+    if (imp.state === 'paused') html += actionButton('resume', 'play_arrow', 'Resume', name);
+    if (imp.state === 'cancelled') html += actionButton('resume', 'refresh', 'Restart', name);
+    if (imp.state === 'running' || imp.state === 'paused') html += actionButton('cancel', 'block', 'Cancel', name);
+    if (imp.missing || imp.queued < imp.found * imp.formats.length) {
+      var label = 'Download the songs of ' + escapeHtml(name) + ' that weren\'t found, as a CSV';
+      html += '<a class="button button-icon button-icon-sm" href="/api/imports/' + encodeURIComponent(imp.id) +
+        '/missing.csv" download aria-label="' + label + '" title="' + label + '"><span class="icon icon-sm">playlist_remove</span></a>';
+    }
+    if (imp.state === 'done' || imp.state === 'cancelled') {
+      html += actionButton('delete', 'delete', 'Remove', name);
+    }
+    return html;
+  }
+
+  function buildImport(imp) {
+    var el = document.createElement('div');
+    el.className = 'import-item';
+    el.setAttribute('data-id', imp.id);
+    el.innerHTML =
+      '<div class="import-head">' +
+        '<div class="import-title">' +
+          '<span class="text-medium text-truncate" data-name></span>' +
+          '<span class="text-caption text-muted text-truncate" data-where></span>' +
+        '</div>' +
+        '<span data-tag></span>' +
+        '<div class="row-actions" data-actions></div>' +
+      '</div>' +
+      '<div class="progress-cell">' +
+        '<div class="progress-linear" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar"></div></div>' +
+        '<span class="text-caption text-muted progress-value" aria-hidden="true"></span>' +
+      '</div>' +
+      '<p class="text-caption text-muted" data-summary></p>' +
+      '<p class="text-caption text-muted text-truncate" data-current hidden></p>' +
+      '<p class="text-caption text-warning" data-note hidden></p>';
+    $('.progress-linear', el).setAttribute('aria-label', 'Progress of ' + imp.name);
+    return el;
+  }
+
+  function updateImport(el, imp) {
+    setText($('[data-name]', el), imp.name);
+    $('[data-name]', el).title = imp.name;
+    setText($('[data-where]', el), imp.formats.join(' + ') + ' · ' + serverRoot + imp.folder + ' · by ' + imp.by);
+
+    var signature = imp.state + '|' + imp.missing + '|' + imp.queued + '|' + imp.found;
+    if (el.getAttribute('data-signature') !== signature) {
+      el.setAttribute('data-signature', signature);
+      $('[data-tag]', el).innerHTML = IMPORT_TAG[imp.state] || '';
+      var cell = $('[data-actions]', el);
+      var focused = cell.contains(document.activeElement) ? document.activeElement.getAttribute('data-action') : null;
+      cell.innerHTML = importActions(imp);
+      if (focused) {
+        var next = $('[data-action="' + focused + '"]', cell) || $('[data-action]', cell);
+        if (next) next.focus();
+      }
+    }
+
+    var searched = imp.total - imp.left;
+    var pct = imp.total ? Math.floor(searched / imp.total * 100) : 100;
+    var bar = $('.progress-linear', el);
+    bar.classList.toggle('progress-paused', imp.state === 'paused');
+    bar.setAttribute('aria-valuenow', pct);
+    bar.setAttribute('aria-valuetext', pct + ' percent searched');
+    $('.progress-bar', bar).style.setProperty('--value', pct + '%');
+    setText($('.progress-value', el), pct + '%');
+
+    var parts = [count(searched) + ' of ' + count(imp.total) + ' searched',
+      count(imp.found) + ' found', count(imp.missing) + ' not found'];
+    if (imp.queued) parts.push(count(imp.queued) + ' queued');
+    if (imp.skipped) parts.push(imp.skipped + ' row' + (imp.skipped === 1 ? '' : 's') + ' without a song name skipped');
+    if (imp.state === 'running') parts.push(formatEta(imp.eta));
+    setText($('[data-summary]', el), parts.filter(Boolean).join(' · '));
+
+    var current = $('[data-current]', el);
+    current.hidden = !(imp.state === 'running' && imp.current.length);
+    setText(current, imp.current.length ? 'Searching: ' + imp.current.join(' · ') : '');
+    var note = $('[data-note]', el);
+    note.hidden = !imp.note;
+    setText(note, imp.note || '');
+  }
+
+  function initImports() {
+    var list = $('#import-list');
+    var section = $('#imports-section');
+    if (!list || !section) return;
+
+    async function load() {
+      var data = await api('GET', '/api/imports');
+      var existing = {};
+      $$('.import-item', list).forEach(function (el) { existing[el.getAttribute('data-id')] = el; });
+      data.imports.forEach(function (imp, index) {
+        var el = existing[imp.id] || buildImport(imp);
+        delete existing[imp.id];
+        updateImport(el, imp);
+        if (list.children[index] !== el) list.insertBefore(el, list.children[index] || null);
+      });
+      Object.keys(existing).forEach(function (id) { existing[id].remove(); });
+      section.hidden = !data.imports.length;
+    }
+    refreshImports = load;
+
+    list.addEventListener('click', async function (event) {
+      var button = event.target.closest('button[data-action]');
+      if (!button) return;
+      var el = button.closest('.import-item');
+      var id = encodeURIComponent(el.getAttribute('data-id'));
+      var name = $('[data-name]', el).textContent;
+      var action = button.getAttribute('data-action');
+      try {
+        if (action === 'delete') {
+          await api('DELETE', '/api/imports/' + id);
+          toast('Removed "' + name + '". The songs it queued stay in the queue.');
+        } else {
+          await api('POST', '/api/imports/' + id + '/' + action);
+          toast({ pause: 'Paused', resume: 'Resumed', cancel: 'Cancelled' }[action] + ' "' + name + '"');
+        }
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
+    });
+
+    poll(load, 3000);
   }
 
   /* -------------------------------------------------------- Queue rows
@@ -1144,9 +1354,14 @@
     var tbody = $('#queue-rows');
     var columns = tbody.getAttribute('data-columns').split(' ');
     poll(async function () {
-      var data = await api('GET', '/api/queue');
+      var data = await api('GET', '/api/queue?mine=1');
       setActiveCount(data.active);
-      syncRows(tbody, data.items.filter(function (item) { return item.by === data.me; }), columns);
+      syncRows(tbody, data.items, columns);
+      var more = $('#queue-more');
+      if (more) {
+        more.hidden = !data.more;
+        setText(more, data.more ? 'And ' + count(data.more) + ' more. The All page lists everything.' : '');
+      }
     }, 1500);
   }
 
@@ -1357,6 +1572,8 @@
   var handOffLink = initPlaylistLink();
   initSearch();
   initScan();
+  initImportButton();
+  initImports();
   initMyQueue();
   initAll();
   initLogin();

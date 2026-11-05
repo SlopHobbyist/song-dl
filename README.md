@@ -14,6 +14,8 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 - We filter out crap like remix, live versions, and files labeled "PRIVATE"
 - Auto retries a different uploader if slow or stuck
 - Optional captcha solver for direct messages
+- Paste a Spotify playlist link: the whole playlist, not just the first 100 songs
+- Searches are kept under Soulseek's limit (34 every 220 seconds) so the account doesn't get banned. Big imports take hours
 
 ## Page List
 
@@ -21,7 +23,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 | --- | --- | --- |
 | `/` | everyone | Search songs or playlists, download them |
 | `/login/` | admins | Sign in (Cloudflare Turnstile optional) |
-| `/server/` | admins | Same as `/`, but saved onto server instead |
+| `/server/` | admins | Same as `/`, but saved onto server instead. Import whole playlists (up to 10,000 songs) in the background |
 | `/all/` | admins | Queue list, delete pause resume cancel stuff |
 
 WebUI at `./webui/`

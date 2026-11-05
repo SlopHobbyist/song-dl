@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from .errors import UserError
 
-MAX_TRACKS = 300
+MAX_TRACKS = 300   # a browser scan; admins' imports (imports.py) take far more
 
 # Normalised headings (lowercase letters and digits only), most specific first.
 TITLE = ('title', 'trackname', 'songname', 'tracktitle', 'songtitle', 'track', 'song', 'name')
@@ -119,8 +119,9 @@ def _main_artist(artists):
     return name.strip()
 
 
-def parse(raw: bytes):
-    """Returns (tracks, skipped) where skipped counts rows without a song name."""
+def parse(raw: bytes, limit=MAX_TRACKS, too_many=None):
+    """Returns (tracks, skipped) where skipped counts rows without a song name.
+    More than `limit` songs is refused with `too_many` (formatted with n and limit)."""
     text = _decode(raw)
     if not text.strip():
         raise UserError('That file is empty.')
@@ -166,7 +167,7 @@ def parse(raw: bytes):
 
     if not tracks:
         raise UserError('Couldn\'t find any songs in that file.')
-    if len(tracks) > MAX_TRACKS:
-        raise UserError(f'That playlist has {len(tracks)} songs. The limit is {MAX_TRACKS} per upload; '
-                        'split it into smaller files.')
+    if len(tracks) > limit:
+        raise UserError((too_many or 'That playlist has {n} songs. A scan can have up to {limit}; '
+                         'split it into smaller files.').format(n=len(tracks), limit=limit))
     return tracks, skipped

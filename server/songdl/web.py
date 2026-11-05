@@ -2,13 +2,15 @@
 finished downloads.
 
 Public: the home page, searching, reading a playlist link into a CSV, scanning
-a playlist, and fetching files to the browser. Behind the admin login: the Server and All pages and the queue API.
+a playlist, and fetching files to the browser. Behind the admin login: the
+Server and All pages, the queue API and playlist imports.
 """
 
 import asyncio
 import json
 import logging
 import re
+import secrets
 import time
 import zipfile
 from collections import defaultdict, deque
@@ -17,7 +19,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import jobs, matching, playlist, spotify, turnstile
+from . import imports, jobs, matching, playlist, spotify, turnstile
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -27,9 +29,12 @@ log = logging.getLogger('songdl')
 
 USER = web.RequestKey('user', str)   # who is signed in, or None
 MAX_QUERY = 200
-MAX_JSON = 16 * 1024
-MAX_UPLOAD = 512 * 1024
-MAX_ZIP_FILES = 300
+MAX_JSON = 64 * 1024
+MAX_UPLOAD = 512 * 1024              # a CSV for a browser scan (up to playlist.MAX_TRACKS songs)
+MAX_IMPORT = 8 * 1024 * 1024         # a CSV for an admin's import (up to imports.MAX_TRACKS songs)
+MAX_FILES = playlist.MAX_TRACKS * len(matching.FORMATS)   # a whole scan in every format
+ZIP_TTL = 3600
+IMPORTER = web.AppKey('importer', imports.Importer)
 ZIP_CHUNK = 1024 * 1024
 CLEANUP_SECONDS = 3600
 
@@ -76,10 +81,12 @@ def error(message, status):
     return web.json_response({'error': message}, status=status)
 
 
-async def read_json(request):
+async def read_json(request, max_size=MAX_JSON):
     try:
+        if (request.content_length or 0) > max_size:
+            raise UserError('The request was too large.', 413)
         raw = await request.read()
-        if len(raw) > MAX_JSON:
+        if len(raw) > max_size:
             raise UserError('The request was too large.', 413)
         data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -114,6 +121,8 @@ def content_security_policy(cfg):
 
 def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
+    importer = imports.Importer(cfg, manager.engine, queue)
+    zips = {}   # token -> (time made, [download job ids], name)
     spotify_reader = spotify.Spotify()
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
@@ -236,7 +245,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
         formats = parse_formats(request.query.get('formats', ''))
         limit(request, 'scan')
-        tracks, skipped = playlist.parse(await request.read())
+        raw = await request.read()
+        if len(raw) > MAX_UPLOAD:
+            raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
+        tracks, skipped = playlist.parse(raw)
         name = ' '.join(request.query.get('name', '').split())[:80] or 'your playlist'
         job = await manager.start_scan(name, formats, tracks, skipped)
         log.info('scan %s from %s: %r, %d songs (%s)', job.id, client_ip(request), name, len(tracks), ','.join(formats))
@@ -261,6 +273,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'csv': found.csv(),
             'filename': clean_name(found.name, None, default='playlist') + '.csv',
             'maxScan': playlist.MAX_TRACKS,
+            'maxImport': imports.MAX_TRACKS,
         })
 
     async def poll_scan(request):
@@ -281,7 +294,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
 
     async def poll_downloads(request):
         views = {}
-        for jid in request.query.getall('id', [])[:MAX_ZIP_FILES]:
+        for jid in request.query.getall('id', [])[:MAX_FILES]:
             job = manager.downloads.get(jid)
             if job:
                 job.seen()
@@ -300,9 +313,27 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'Cache-Control': 'private, max-age=3600',
         })
 
+    async def make_zip(request):
+        """Remembers which finished downloads go in a zip, and gives back the address that
+        streams it. (A few hundred job ids are too long to fit in that address.)"""
+        data = await read_json(request)
+        ids = data.get('jobs')
+        if not isinstance(ids, list) or not ids:
+            raise UserError('There\'s nothing to zip.')
+        now = time.monotonic()
+        for token in [t for t, z in zips.items() if now - z[0] > ZIP_TTL]:
+            del zips[token]
+        token = secrets.token_urlsafe(12)
+        zips[token] = (now, [str(i) for i in ids[:MAX_FILES]], data.get('name'))
+        return web.json_response({'url': f'/api/zip/{token}'})
+
     async def zip_files(request):
+        made = zips.get(request.match_info['token'])
+        if not made:
+            raise UserError('That zip has expired. Please download again.', 404)
+        _, ids, zip_name = made
         files, used = [], set()
-        for jid in request.query.getall('job', [])[:MAX_ZIP_FILES]:
+        for jid in ids:
             job = manager.downloads.get(jid)
             if not job or job.state != 'done' or not job.path or not job.path.exists():
                 continue
@@ -316,7 +347,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             files.append((name, job.path))
         if not files:
             raise UserError('There\'s nothing to zip. The files may have expired.', 404)
-        zip_name = clean_name(request.query.get('name'), None, default='songs') + '.zip'
+        zip_name = clean_name(zip_name, None, default='songs') + '.zip'
         resp = web.StreamResponse(headers={
             'Content-Type': 'application/zip',
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(zip_name)}",
@@ -340,14 +371,20 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     # The server queue (admins only)
 
     async def get_queue(request):
-        require_admin(request)
-        return web.json_response({**queue.view(), 'me': request[USER]})
+        """The whole queue; ?summary=1 for just the counts; ?mine=1 for the signed-in admin's
+        songs with only the latest finished ones."""
+        user = require_admin(request)
+        if request.query.get('summary'):
+            return web.json_response(queue.summary())
+        if request.query.get('mine'):
+            return web.json_response({**queue.view(by=user, recent=100), 'me': user})
+        return web.json_response({**queue.view(), 'me': user})
 
     async def add_to_queue(request):
         user = require_admin(request)
         data = await read_json(request)
         ids = data.get('results')
-        if not isinstance(ids, list) or not ids or len(ids) > MAX_ZIP_FILES * 4:
+        if not isinstance(ids, list) or not ids or len(ids) > MAX_FILES:
             raise UserError('Nothing to queue.')
         entries = [manager.entry(i) for i in ids]
         await manager.engine.check_connected()
@@ -375,6 +412,42 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         require_admin(request)
         return web.json_response({'cleared': queue.clear_done()})
 
+    # Playlist imports (admins only)
+
+    async def add_import(request):
+        """{csv, name, formats, folder}: the whole playlist, searched in the background."""
+        user = require_admin(request)
+        data = await read_json(request, MAX_IMPORT)
+        text = data.get('csv')
+        if not isinstance(text, str) or not text.strip():
+            raise UserError('Choose a playlist CSV or paste a playlist link first.')
+        formats = parse_formats(data.get('formats'))
+        tracks, skipped = playlist.parse(
+            text.encode('utf-8'), imports.MAX_TRACKS,
+            'That playlist has {n} songs. An import can have up to {limit}; split it into smaller files.')
+        name = ' '.join(str(data.get('name') or '').split())[:120]
+        name = re.sub(r'\.csv$', '', name, flags=re.I) or 'Playlist'
+        imp = importer.add(name, formats, data.get('folder'), user, tracks, skipped)
+        return web.json_response(imp.view())
+
+    async def list_imports(request):
+        require_admin(request)
+        return web.json_response(importer.view())
+
+    def import_action(action):
+        async def handler(request):
+            require_admin(request)
+            action(importer.get(request.match_info['id']))
+            return web.json_response({'ok': True})
+        return handler
+
+    async def missing_csv(request):
+        require_admin(request)
+        imp = importer.get(request.match_info['id'])
+        name = clean_name(imp.name + ' - not found', None, default='not found') + '.csv'
+        return web.Response(text=imp.missing_csv(), content_type='text/csv', headers={
+            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
+
     async def health(request):
         try:
             state = await manager.engine.slskd.server_state()
@@ -396,7 +469,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             raise web.HTTPNotFound()
         return web.FileResponse(webui / file, headers={'Cache-Control': 'no-cache'})
 
-    app = web.Application(middlewares=[middleware], client_max_size=MAX_UPLOAD)
+    app = web.Application(middlewares=[middleware], client_max_size=MAX_IMPORT)
+    app[IMPORTER] = importer
     app.add_routes([
         web.get('/api/session', session),
         web.post('/api/login', login),
@@ -409,7 +483,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.delete('/api/scan/{id}', cancel_scan),
         web.post('/api/download', start_download),
         web.get('/api/downloads', poll_downloads),
-        web.get('/api/zip', zip_files),
+        web.post('/api/zip', make_zip),
+        web.get('/api/zip/{token}', zip_files),
         web.get('/api/queue', get_queue),
         web.post('/api/queue', add_to_queue),
         web.post('/api/queue/pause-all', pause_all),
@@ -418,6 +493,13 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/queue/{id}/resume', queue_action(queue.resume)),
         web.post('/api/queue/{id}/cancel', queue_action(queue.cancel)),
         web.delete('/api/queue/{id}', delete_queued),
+        web.get('/api/imports', list_imports),
+        web.post('/api/imports', add_import),
+        web.get('/api/imports/{id}/missing.csv', missing_csv),
+        web.post('/api/imports/{id}/pause', import_action(importer.pause)),
+        web.post('/api/imports/{id}/resume', import_action(importer.resume)),
+        web.post('/api/imports/{id}/cancel', import_action(importer.cancel)),
+        web.delete('/api/imports/{id}', import_action(importer.delete)),
         web.get('/api/health', health),
         web.get('/files/{folder}/{name}', serve_file),
         web.get('/', page),
@@ -428,10 +510,12 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         if not auth.enabled:
             log.warning('webserver.admins is empty: the Server and All pages are turned off')
         queue.load()
+        importer.load()
         await manager.engine.slskd.start()
         tasks = [
             asyncio.create_task(housekeeping(cfg, manager, queue, limiter, auth)),
             asyncio.create_task(queue.run()),
+            asyncio.create_task(importer.run()),
         ]
         if captcha:
             await captcha.start()
@@ -439,6 +523,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         else:
             log.info('captcha.enabled is off, so uploaders\' captcha messages won\'t be answered')
         yield
+        importer.shutdown()
         queue.shutdown()
         for task in tasks:
             task.cancel()

@@ -55,6 +55,12 @@ async def finished(client, ids):
     return await wait_for(lambda: downloads(client, ids), lambda jobs: all(j['state'] != 'running' for j in jobs.values()))
 
 
+async def zip_url(client, ids, name=None):
+    res = await client.post('/api/zip', json={'jobs': ids, 'name': name})
+    assert res.status == 200, await res.text()
+    return (await res.json())['url']
+
+
 async def queue_view(client):
     return await (await client.get('/api/queue')).json()
 
@@ -97,7 +103,7 @@ async def test_download_to_the_browser_and_zip(site, fake):
     body = await res.read()
     assert body[:4] == b'fLaC' and len(body) == one['size']
 
-    res = await site.get('/api/zip', params=[('job', i) for i in ids] + [('name', 'My songs')])
+    res = await site.get(await zip_url(site, ids, 'My songs'))
     assert res.status == 200 and 'My%20songs.zip' in res.headers['Content-Disposition']
     names = zipfile.ZipFile(io.BytesIO(await res.read())).namelist()
     assert sorted(names) == ['Daft Punk - Digital Love.flac', 'Daft Punk - Digital Love.wav']
@@ -140,7 +146,7 @@ async def test_playlist_scan_then_download(site):
     ids = [await fetch(site, r['id']) for t in job['tracks'] for r in t['results']]
     jobs = await finished(site, ids)
     assert len(jobs) == 4 and all(j['state'] == 'done' for j in jobs.values())
-    res = await site.get('/api/zip', params=[('job', i) for i in ids])
+    res = await site.get(await zip_url(site, ids))
     assert len(zipfile.ZipFile(io.BytesIO(await res.read())).namelist()) == 4
 
 

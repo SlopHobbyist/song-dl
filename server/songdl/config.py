@@ -49,7 +49,7 @@ class Config:
     captcha: bool = False  # answer uploaders' "type download to prove you're human" messages
     llm_url: str = 'http://localhost:8081'
     # runtime locations
-    data_dir: Path = Path('data')   # the server queue is remembered here across restarts
+    data_dir: Path = Path('data')   # the server queue and imports are remembered here across restarts
     slskd_dir: Path = Path('slskd')
     slskd_url: str = 'http://localhost:5030'
     certs_dir: Path = Path('certs')
@@ -62,6 +62,10 @@ class Config:
     @property
     def queue_file(self):
         return self.data_dir / 'queue.json'
+
+    @property
+    def imports_file(self):
+        return self.data_dir / 'imports.json'
 
 
 def _path(value, base):

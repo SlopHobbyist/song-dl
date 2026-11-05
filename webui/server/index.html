@@ -52,7 +52,7 @@
 
   <section class="hero">
     <div class="container container-narrow">
-      <h1 class="text-display-3 text-center" id="home-title" data-title-search="Find a song" data-title-playlist="Scan a playlist">Find a song</h1>
+      <h1 class="text-display-3 text-center" id="home-title" data-title-search="Find a song" data-title-playlist="Add a playlist">Find a song</h1>
 
       <div class="field mt-6">
         <label class="field-label" for="subfolder">Subfolder</label>
@@ -74,7 +74,7 @@
             <legend class="visually-hidden">Download formats</legend>
             <div class="choice-group choice-group-row">
               <label class="choice"><input type="checkbox" name="format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
-              <label class="choice"><input type="checkbox" name="format" value="AIFF" checked><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
+              <label class="choice"><input type="checkbox" name="format" value="AIFF"><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
               <label class="choice"><input type="checkbox" name="format" value="FLAC"><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
               <label class="choice"><input type="checkbox" name="format" value="MP3"><span class="choice-box"></span><span class="choice-label">MP3</span></label>
             </div>
@@ -103,14 +103,15 @@
             <legend class="visually-hidden">Playlist download formats</legend>
             <div class="choice-group choice-group-row">
               <label class="choice"><input type="checkbox" name="csv-format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
-              <label class="choice"><input type="checkbox" name="csv-format" value="AIFF" checked><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
+              <label class="choice"><input type="checkbox" name="csv-format" value="AIFF"><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
               <label class="choice"><input type="checkbox" name="csv-format" value="FLAC"><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
               <label class="choice"><input type="checkbox" name="csv-format" value="MP3"><span class="choice-box"></span><span class="choice-label">MP3</span></label>
             </div>
           </fieldset>
           <div class="row row-tight">
             <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon" aria-hidden="true">search</span> Song</button>
-            <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon" aria-hidden="true">fact_check</span> Upload and scan</button>
+            <button class="button button-outlined button-lg" type="button" id="scan-button" title="Look for every song first, then choose what to queue (up to 300 songs)"><span class="icon" aria-hidden="true">fact_check</span> Scan</button>
+            <button class="button button-filled button-lg" type="button" id="import-button" title="Queue every song in the background as it's found (any size)"><span class="icon" aria-hidden="true">playlist_add</span> Import</button>
           </div>
         </div>
       </div>
@@ -187,6 +188,15 @@
     </div>
   </section>
 
+  <!-- =============================================== Playlist imports -->
+  <section class="section section-tight" id="imports-section" aria-labelledby="imports-title" hidden>
+    <div class="container container-narrow">
+      <h2 class="text-heading-1" id="imports-title">Playlist imports</h2>
+      <p class="text-body-2 text-muted mt-1">Each song is queued as soon as it's found. Soulseek allows only about 9 searches a minute, so a big playlist takes hours. It carries on with this page closed.</p>
+      <div class="import-list mt-4" id="import-list"></div>
+    </div>
+  </section>
+
   <!-- ===================================================== Your queue -->
   <section class="section section-tight">
     <div class="container container-narrow">
@@ -207,6 +217,7 @@
           <tbody id="queue-rows" data-columns="song status progress"></tbody>
         </table>
       </div>
+      <p class="text-caption text-muted mt-2" id="queue-more" role="status" hidden></p>
     </div>
   </section>
 </main>
