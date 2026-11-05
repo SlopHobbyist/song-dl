@@ -1,0 +1,56 @@
+# Song-DL. Copy config.yaml.example to config.yaml and edit it, then: sudo docker compose up -d
+#
+# Ports are published below, not taken from config.yaml:
+#   - web UI: change the left side of "8080:8080" to serve on another port
+#     (webserver.ip and webserver.port in config.yaml only apply outside Docker)
+#   - Soulseek: if you change soulseek.listen_port, change both sides of
+#     "50300:50300" to match, and forward that port on your router
+#
+# Folders next to this file:
+#   downloads/  every song: files fetched for visitors, and the folders admins save songs into
+#   slskd/      slskd's settings and data
+#   data/       the admin queue, remembered across restarts
+#   certs/      cert.pem and key.pem when webserver.https is on
+
+services:
+  # Writes slskd/slskd.yml from config.yaml, then exits.
+  setup:
+    build: &build
+      context: .
+      dockerfile: server/Dockerfile
+    image: song-dl
+    command: ["python", "-m", "songdl", "setup"]
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./slskd:/slskd
+    restart: "no"
+
+  slskd:
+    image: slskd/slskd:0.26.0
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./slskd:/app
+      - ./downloads:/app/downloads
+    ports:
+      - "50300:50300"
+    restart: unless-stopped
+
+  app:
+    build: *build
+    image: song-dl
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      slskd:
+        condition: service_started
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./slskd:/slskd:ro
+      - ./downloads:/downloads
+      - ./data:/data
+      - ./certs:/certs
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

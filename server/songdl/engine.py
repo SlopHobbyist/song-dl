@@ -1,0 +1,412 @@
+"""Everything that talks to Soulseek through slskd: searching, ranking what
+comes back, and fetching files.
+
+Fetching goes through a Fetch, one per remote file, shared by everything that
+wants that file, so two people downloading the same song don't enqueue it
+twice. `Engine.download` walks down a ranked list of copies, moving on when an
+uploader fails, keeps us queued too long, or stalls.
+"""
+
+import asyncio
+import logging
+import re
+import shutil
+import time
+import uuid
+from pathlib import Path
+
+from . import matching
+from .errors import UserError
+from .slskd import Slskd, SlskdError
+
+log = logging.getLogger('songdl')
+
+POLL_SECONDS = 1
+SEARCH_TIMEOUT_MS = 8000      # slskd ends the search after this long without new responses
+SEARCH_MAX_SECONDS = 30       # hard cap on a search, whatever slskd says
+RESPONSE_LIMIT = 500
+FILE_LIMIT = 10000
+QUEUE_WAIT = 90               # seconds to wait in a remote queue before trying another copy
+QUEUE_WAIT_LAST = 600         # ...when there is no other copy left
+STALL_SECONDS = 45            # seconds without progress before giving up on a transfer
+MAX_ATTEMPTS = 5              # copies to try per download
+RESCAN_GAP = 120              # minimum seconds between share rescans
+MIN_FREE_BYTES = 2 * 10**9    # refuse new downloads when the disk has less room than this
+LENGTH_TOLERANCE = 8          # seconds a copy may differ from the length in the CSV and still be preferred
+
+NOT_CONNECTED = 'Song-DL is not connected to the Soulseek network right now. Please try again in a minute.'
+UNREACHABLE = 'Song-DL lost contact with its Soulseek client. Please try again in a minute.'
+LOW_DISK = 'The server is almost out of disk space, so it can\'t download right now.'
+
+# slskd saves each fetch in a folder named by a random UUID under the downloads folder
+STAGING = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
+
+def mb(n):
+    return f'{n / 1e6:.1f} MB'
+
+
+class Fetch:
+    """One remote file being downloaded by slskd."""
+
+    def __init__(self, cand: matching.Candidate):
+        self.cand = cand
+        self.id = str(uuid.uuid4())  # also the folder it's saved in
+        self.transfer_id = None
+        self.phase = 'requesting'    # requesting, queued, transferring, done, failed
+        self.place = None            # place in the uploader's queue
+        self.bytes = 0
+        self.speed = 0
+        self.started = None
+        self.finished = None
+        self.path = None
+        self.error = None
+        self.observers = 0
+        self.task = None
+
+    @property
+    def key(self):
+        return self.cand.username, self.cand.filename
+
+    @property
+    def active(self):
+        return self.phase not in ('done', 'failed')
+
+
+class Engine:
+    def __init__(self, cfg, slskd: Slskd):
+        self.cfg = cfg
+        self.slskd = slskd
+        self.fetches = {}   # (username, filename) -> Fetch
+        self.tasks = set()
+        self.rescan_pending = False
+        self.last_rescan = 0
+
+    def spawn(self, coro):
+        task = asyncio.create_task(coro)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return task
+
+    def shutdown(self):
+        for task in list(self.tasks):
+            task.cancel()
+
+    # Connection
+
+    async def check_connected(self):
+        try:
+            state = await self.slskd.server_state()
+        except SlskdError:
+            raise UserError(UNREACHABLE, 503)
+        if not state or not state.get('isLoggedIn'):
+            raise UserError(NOT_CONNECTED, 503)
+
+    async def connected(self):
+        try:
+            await self.check_connected()
+            return True
+        except UserError:
+            return False
+
+    def low_disk(self):
+        try:
+            return shutil.disk_usage(self.cfg.downloads_dir).free < MIN_FREE_BYTES
+        except OSError:
+            return False
+
+    # Search
+
+    async def search(self, query, fmt, status=None):
+        """Searches Soulseek for the query and returns a matching.Ranking of
+        the files of one format. `status(text)` is told how the search is going."""
+        search_id = str(uuid.uuid4())
+        await self.slskd.start_search(
+            search_id, matching.search_text(query, fmt),
+            searchTimeout=SEARCH_TIMEOUT_MS, responseLimit=RESPONSE_LIMIT, fileLimit=FILE_LIMIT,
+        )
+        try:
+            responses = await self._collect(search_id, status)
+        finally:
+            self.spawn(self._quietly(self.slskd.delete_search(search_id)))
+        return matching.rank(query, fmt, responses)
+
+    async def _collect(self, search_id, status):
+        started = time.monotonic()
+        reported = -1
+        while True:
+            await asyncio.sleep(POLL_SECONDS)
+            s = await self.slskd.get_search(search_id)
+            if 'Errored' in (s.get('state') or ''):
+                raise UserError('The Soulseek search failed. Please try again.')
+            if s.get('isComplete'):
+                break
+            n = s.get('responseCount') or 0
+            if status and n != reported:
+                status(f'Searching Soulseek: {n} response{"s" * (n != 1)} so far')
+                reported = n
+            if time.monotonic() - started > SEARCH_MAX_SECONDS:
+                await self.slskd.stop_search(search_id)
+                await asyncio.sleep(0.5)
+                break
+        return await self.slskd.search_responses(search_id) or []
+
+    async def find_track(self, track, fmt, status=None):
+        """Searches Soulseek for a song of a playlist and returns the ranked
+        copies, or raises UserError('No match found')."""
+        cands = (await self.search(track.query, fmt, status)).candidates
+        if not cands and track.artist:
+            # Soulseek blocks searches for some artists. Search the title alone and
+            # keep only files whose path mentions the artist.
+            wanted = set(matching.tokens(track.artist))
+            alone = (await self.search(track.title_query, fmt, status)).candidates
+            cands = [c for c in alone if wanted & set(matching.tokens(c.filename))]
+        # A remix is only acceptable if the playlist asks for one
+        cands = [c for c in cands if c.relevance >= 1]
+        if not cands:
+            raise UserError('No match found')
+        if track.duration:
+            # Stable, so the ranking is kept within each group
+            cands.sort(key=lambda c: not (c.length and abs(c.length - track.duration) <= LENGTH_TOLERANCE))
+        return cands
+
+    # Download
+
+    async def download(self, cands, update=None):
+        """Fetches the first copy that works and returns its Fetch (see
+        fetch.path). `update(progress, speed, note)` is called as it goes;
+        progress is 0..1 or None. Raises UserError when no copy works."""
+        cands = cands[:MAX_ATTEMPTS]
+        last = len(cands) - 1
+        for i, cand in enumerate(cands):
+            fetch = self._fetch(cand)
+            fetch.observers += 1
+            try:
+                if await self._watch(fetch, i == last, i, update):
+                    return fetch
+            finally:
+                fetch.observers -= 1
+                if fetch.active and not fetch.observers:
+                    self.spawn(self._cancel(fetch))
+        raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
+                        if len(cands) > 1 else
+                        'Couldn\'t get the file from the uploader. Please try again later, or search again.')
+
+    async def _watch(self, fetch: Fetch, is_last, attempt, update):
+        """Follows a fetch. Returns True once the file is ready, False when this copy is no good."""
+        user = fetch.cand.username
+        prefix = 'Another copy: ' if attempt else ''
+        waiting_since = time.monotonic()
+        progress_at, progress_bytes = time.monotonic(), -1
+
+        def report(progress, note):
+            if update:
+                update(progress, fetch.speed or None if progress is not None else None, prefix + note)
+
+        while True:
+            phase = fetch.phase
+            if phase == 'done':
+                return True
+            if phase == 'failed':
+                log.info('copy from %s failed: %s', user, fetch.error)
+                return False
+
+            if phase == 'transferring':
+                size = fetch.cand.size
+                report(fetch.bytes / size if size else None, 'Downloading')
+                if fetch.bytes != progress_bytes:
+                    progress_at, progress_bytes = time.monotonic(), fetch.bytes
+                elif time.monotonic() - progress_at > STALL_SECONDS:
+                    log.info('transfer from %s stalled', user)
+                    return False
+            else:
+                if phase == 'queued':
+                    report(None, f'Queued by the uploader (position {fetch.place})' if fetch.place
+                           else 'Queued by the uploader')
+                else:
+                    report(None, f'Requesting the file from {user}')
+                limit = QUEUE_WAIT_LAST if is_last else QUEUE_WAIT
+                if time.monotonic() - waiting_since > limit:
+                    log.info('gave up waiting on %s after %d s', user, limit)
+                    return False
+
+            await asyncio.sleep(0.5)
+
+    def _fetch(self, cand):
+        fetch = self.fetches.get((cand.username, cand.filename))
+        if fetch and (fetch.active or (fetch.phase == 'done' and fetch.path and fetch.path.exists())):
+            return fetch
+        fetch = Fetch(cand)
+        self.fetches[fetch.key] = fetch
+        fetch.task = self.spawn(self._run_fetch(fetch))
+        return fetch
+
+    async def _run_fetch(self, fetch: Fetch):
+        cand = fetch.cand
+        try:
+            await self._transfer(fetch)
+        except SlskdError as e:
+            log.info('fetch %s from %s failed: %s', cand.filename, cand.username, e)
+            fetch.error = _transfer_error(cand.username, str(e))
+            fetch.phase = 'failed'
+        except asyncio.CancelledError:
+            fetch.phase = 'failed'
+            fetch.error = 'Cancelled'
+            raise
+        except Exception:
+            log.exception('fetch crashed')
+            fetch.error = f'Something went wrong downloading from {cand.username}'
+            fetch.phase = 'failed'
+
+    async def _transfer(self, fetch: Fetch):
+        cand = fetch.cand
+        res = await self.slskd.enqueue(cand.username, cand.filename, cand.size, fetch.id)
+        failures = (res or {}).get('failures') or []
+        transfers = ((res or {}).get('batch') or {}).get('transfers') or []
+        if failures or not transfers:
+            reason = failures[0].get('message') if failures else 'not enqueued'
+            raise SlskdError(reason or 'not enqueued', 500)
+        fetch.transfer_id = transfers[0]['id']
+
+        position_checked = 0
+        while True:
+            await asyncio.sleep(POLL_SECONDS)
+            t = await self.slskd.get_download(cand.username, fetch.transfer_id)
+            state = t.get('state') or ''
+            if state.startswith('Completed'):
+                fetch.finished = time.monotonic()
+                if 'Succeeded' not in state:
+                    fetch.error = _end_reason(cand.username, state, t.get('exception'))
+                    fetch.phase = 'failed'
+                    return
+                await self._finish(fetch)
+                return
+            if state == 'InProgress':
+                if fetch.phase != 'transferring':
+                    fetch.started = time.monotonic()
+                fetch.phase = 'transferring'
+                fetch.bytes = t.get('bytesTransferred') or 0
+                fetch.speed = round(t.get('averageSpeed') or 0)
+            elif 'Queued' in state and 'Remotely' in state:
+                fetch.phase = 'queued'
+                if time.monotonic() - position_checked > 10:
+                    position_checked = time.monotonic()
+                    try:
+                        place = await self.slskd.queue_position(cand.username, fetch.transfer_id)
+                        fetch.place = place if isinstance(place, int) and place > 0 else fetch.place
+                    except SlskdError:
+                        pass
+
+    async def _finish(self, fetch: Fetch):
+        folder = self.cfg.downloads_dir / fetch.id
+        files = [p for p in folder.iterdir() if p.is_file()] if folder.is_dir() else []
+        if not files:
+            raise SlskdError('the finished file is missing', 500)
+        path = max(files, key=lambda p: p.stat().st_mtime)
+        size = path.stat().st_size
+        if size != fetch.cand.size:
+            fetch.error = f'The file from {fetch.cand.username} was incomplete'
+        elif not valid_audio(path, fetch.cand.fmt):
+            fetch.error = f'The file from {fetch.cand.username} isn\'t a real {matching.LABELS[fetch.cand.fmt]}'
+        if fetch.error:
+            path.unlink(missing_ok=True)
+            fetch.phase = 'failed'
+            return
+        fetch.bytes = size
+        fetch.path = path
+        fetch.phase = 'done'
+        log.info('downloaded %s', path)
+        self.schedule_rescan()
+
+    def forget(self, fetch: Fetch):
+        """Deletes a finished fetch's staging folder, once its file has been moved elsewhere or is no longer wanted."""
+        if self.fetches.get(fetch.key) is fetch:
+            del self.fetches[fetch.key]
+        folder = self.cfg.downloads_dir / fetch.id
+        shutil.rmtree(folder, ignore_errors=True)
+
+    def active_speed(self):
+        return sum(f.speed for f in self.fetches.values() if f.phase == 'transferring')
+
+    # Shares
+
+    def schedule_rescan(self):
+        """Shares new downloads soon. Many uploaders throttle or refuse users who
+        share nothing, so the share should never lag far behind."""
+        if self.cfg.share and not self.rescan_pending:
+            self.rescan_pending = True
+            self.spawn(self._rescan())
+
+    async def _rescan(self):
+        await asyncio.sleep(max(0, self.last_rescan + RESCAN_GAP - time.monotonic()))
+        self.rescan_pending = False
+        self.last_rescan = time.monotonic()
+        await self._quietly(self.slskd.rescan_shares())
+
+    async def _cancel(self, fetch: Fetch):
+        if fetch.task:
+            fetch.task.cancel()
+        if fetch.transfer_id:
+            await self._quietly(self.slskd.cancel_download(fetch.cand.username, fetch.transfer_id))
+        fetch.phase = 'failed'
+
+    async def _quietly(self, coro):
+        try:
+            await coro
+        except SlskdError as e:
+            log.debug('ignored slskd error: %s', e)
+
+    def prune(self):
+        for key in [k for k, f in self.fetches.items() if not f.active and not f.observers
+                    and (f.phase == 'failed' or not (f.path and f.path.exists()))]:
+            del self.fetches[key]
+
+
+def _transfer_error(user, message):
+    m = message.lower()
+    if 'connect' in m or 'unreachable' in m or 'timed out' in m:
+        return f'Couldn\'t connect to {user}'
+    if 'offline' in m:
+        return f'{user} is offline'
+    if 'reject' in m or 'denied' in m or 'not shared' in m or 'banned' in m:
+        return f'{user} refused the download'
+    return f'{user} didn\'t accept the download'
+
+
+def _end_reason(user, state, exception):
+    if 'Rejected' in state:
+        return f'{user} refused the download' + (f' ({exception})' if exception else '')
+    if 'Cancelled' in state:
+        return f'{user} cancelled the transfer'
+    if 'TimedOut' in state:
+        return f'The transfer from {user} timed out'
+    return f'The transfer from {user} failed'
+
+
+def valid_audio(path: Path, fmt):
+    """Checks the file starts the way the format says it should."""
+    with path.open('rb') as f:
+        head = f.read(12)
+        if fmt == 'flac':
+            if head[:3] == b'ID3':
+                head = _after_id3(f)
+            return head[:4] == b'fLaC'
+        if fmt == 'wav':
+            return head[:4] in (b'RIFF', b'RF64') and head[8:12] == b'WAVE'
+        if fmt == 'aiff':
+            return head[:4] == b'FORM' and head[8:12] in (b'AIFF', b'AIFC')
+        if fmt == 'mp3':
+            if head[:3] == b'ID3':
+                head = _after_id3(f)
+            return len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0
+    return False
+
+
+def _after_id3(f):
+    """The bytes following an ID3v2 tag at the start of the file; its size is a 28-bit syncsafe int."""
+    f.seek(6)
+    b = f.read(4)
+    if len(b) < 4:
+        return b''
+    f.seek(10 + (b[0] << 21 | b[1] << 14 | b[2] << 7 | b[3]))
+    return f.read(4)

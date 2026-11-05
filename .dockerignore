@@ -1,0 +1,10 @@
+.git
+.venv
+old
+downloads
+data
+slskd
+certs
+config.yaml
+**/__pycache__
+webui/vendored/*/.git

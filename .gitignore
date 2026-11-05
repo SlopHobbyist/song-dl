@@ -111,3 +111,11 @@ venv.bak/
 htmlcov/
 *.cover
 .cache
+
+# Song-DL runtime (config holds Soulseek and admin passwords)
+/config.yaml
+/certs/
+/data/
+/slskd/*
+!/slskd/.gitkeep
+/examples/

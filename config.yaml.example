@@ -1,0 +1,35 @@
+soulseek:
+  address: vps.slsknet.org
+  port: 2271
+  listen_port: 50300 # if changed, also change the port in docker-compose.yaml
+  # A new account is created automatically the first time an unused name logs in
+  username: YourUsername
+  password: YourPassword
+  description: |
+    This is my multiline
+    account description
+downloads:
+  downloads_folder: ./downloads # with Docker, set by the volume in docker-compose.yaml
+  share: True # if the downloads folder should be shared on Soulseek
+  max_file_age: 7 # days. Files fetched for visitors' browsers are deleted after this long (0 keeps them).
+                  # Songs the admins save into folders are never deleted.
+webserver:
+  # ip and port only apply outside Docker; with Docker, edit the ports in docker-compose.yaml
+  ip: 0.0.0.0
+  port: 8080
+  https: False # True uses certs/cert.pem and certs/key.pem, or makes a self-signed pair
+  rate_limiting: True
+  rate_limit: 5 # searches and playlist uploads per minute each visitor IP can start
+  trust_proxy: False # True when behind Cloudflare or another reverse proxy: take the visitor's IP and
+                     # scheme from CF-Connecting-IP / X-Forwarded-For / X-Forwarded-Proto. Only turn this
+                     # on if the site can't be reached except through that proxy.
+  # Admins can sign in at /login.html to save songs on the server (Server page) and
+  # manage the queue (All page). Passwords must be at least 8 characters.
+  # Remove the users to turn the admin pages off.
+  admins:
+    admin: change-me-please
+  # Optional Cloudflare Turnstile on the admin sign-in. Create a widget at
+  # https://dash.cloudflare.com/?to=/:account/turnstile and paste both keys.
+  turnstile:
+    site_key:
+    secret_key:
