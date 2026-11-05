@@ -18,7 +18,8 @@
 # captcha.enabled: True in config.yaml and run: sudo docker compose --profile captcha up -d
 
 services:
-  # Writes slskd/slskd.yml from config.yaml, then exits.
+  # Writes slskd/slskd.yml from config.yaml, then exits. If config.yaml still has the example
+  # credentials, it first saves random ones into it, so it can write to config.yaml.
   setup:
     build: &build
       context: .
@@ -26,7 +27,7 @@ services:
     image: song-dl
     command: ["python", "-m", "songdl", "setup"]
     volumes:
-      - ./config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config/config.yaml
       - ./slskd:/slskd
     restart: "no"
 

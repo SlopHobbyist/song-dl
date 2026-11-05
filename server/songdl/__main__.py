@@ -10,7 +10,7 @@ import sys
 
 from aiohttp import web
 
-from . import config, setup
+from . import config, credentials, setup
 from .captcha import Captcha
 from .engine import Engine
 from .jobs import Manager
@@ -67,7 +67,12 @@ def main(argv):
     command = argv[1] if len(argv) > 1 else 'serve'
 
     try:
-        cfg = config.load()
+        path = config.config_path()
+        changed = credentials.fill_defaults(path)
+        if changed:
+            log.warning('%s had the example credentials, so random ones were saved into it: %s. '
+                        'Look in config.yaml for the passwords.', path, ', '.join(changed))
+        cfg = config.load(path)
     except config.ConfigError as e:
         log.error('%s', e)
         return 1

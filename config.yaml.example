@@ -2,7 +2,9 @@ soulseek:
   address: vps.slsknet.org
   port: 2271
   listen_port: 50300 # if changed, also change the port in docker-compose.yaml
-  # A new account is created automatically the first time an unused name logs in
+  # A new account is created automatically the first time an unused name logs in.
+  # Left as YourUsername / YourPassword, a random name (like HorseTomatoPunctually4256) and password
+  # are made on first start and saved here.
   username: YourUsername
   password: YourPassword
   description: |
@@ -24,7 +26,8 @@ webserver:
                      # scheme from CF-Connecting-IP / X-Forwarded-For / X-Forwarded-Proto. Only turn this
                      # on if the site can't be reached except through that proxy.
   # Admins can sign in at /login.html to save songs on the server (Server page) and
-  # manage the queue (All page). Passwords must be at least 8 characters.
+  # manage the queue (All page). Passwords must be at least 8 characters. Left as change-me-please,
+  # a random 32 character password is made on first start and saved here.
   # Remove the users to turn the admin pages off.
   admins:
     admin: change-me-please

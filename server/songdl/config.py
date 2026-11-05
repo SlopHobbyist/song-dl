@@ -80,8 +80,12 @@ def _admins(raw):
     return admins
 
 
+def config_path():
+    return Path(os.environ.get('SONGDL_CONFIG', 'config.yaml')).resolve()
+
+
 def load(path=None):
-    path = Path(path or os.environ.get('SONGDL_CONFIG', 'config.yaml')).resolve()
+    path = Path(path).resolve() if path else config_path()
     try:
         raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     except FileNotFoundError:
