@@ -19,7 +19,7 @@
 <header class="topbar">
   <a class="topbar-title brand" href="index.html">Song-DL</a>
   <div class="topbar-actions">
-    <a class="button button-outlined button-sm" href="login.html"><span class="icon icon-sm">admin_panel_settings</span> Admin</a>
+    <a class="button button-outlined button-sm" href="login.html"><span class="icon icon-sm">admin_panel_settings</span></a>
   </div>
 </header>
 
@@ -33,7 +33,7 @@
     <form class="search-form mt-6" id="search-form" data-panel="search" autocomplete="off">
       <div class="search search-hero">
         <span class="icon">search</span>
-        <input type="search" id="q" name="q" placeholder="Song title, artist" aria-label="Song name">
+        <input type="search" id="q" name="q" placeholder="Artist | Song Title" aria-label="Song name">
       </div>
       <div class="search-form-row">
         <fieldset class="fieldset fieldset-bare">
@@ -44,7 +44,7 @@
           </div>
         </fieldset>
         <div class="row row-tight">
-          <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Upload playlist</button>
+          <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Playlist</button>
           <button class="button button-filled button-lg" type="submit"><span class="icon">search</span> Search</button>
         </div>
       </div>
@@ -54,7 +54,7 @@
     <div class="search-form mt-6" id="playlist-form" data-panel="playlist" hidden>
       <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV">
         <span class="icon">upload_file</span>
-        <span class="text-subtitle">Drop a playlist CSV here, or click to browse</span>
+        <span class="text-subtitle">Drag a playlist CSV here, or click to browse</span>
         <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
       </div>
       <div class="file-list" id="csv-list"></div>
@@ -67,8 +67,8 @@
           </div>
         </fieldset>
         <div class="row row-tight">
-          <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Search a song</button>
-          <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and scan</button>
+          <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Song</button>
+          <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and Search</button>
         </div>
       </div>
     </div>
