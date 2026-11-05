@@ -99,8 +99,24 @@ def _seconds(value, heading):
 
 
 def _main_artist(artists):
-    """"A; B; C" and "A, B" both mean several artists; searching for the first is enough."""
-    return re.split(r'[;,\n]', artists, maxsplit=1)[0].strip()
+    """"A; B; C" and "A, B" both mean several artists; searching for the first is enough.
+    Some names have a comma of their own, though: "Earth, Wind & Fire", "Crosby, Stills,
+    Nash & Young" and "Tyler, The Creator" are kept whole."""
+    first = re.split(r'[;\n]', artists, maxsplit=1)[0]
+    parts = [p.strip() for p in first.split(',')]
+    name = parts[0]
+    for i, part in enumerate(parts[1:], 1):
+        if re.match(r'the\b', part, re.I) and len(part.split()) <= 3:
+            name += ', ' + part        # Tyler, The Creator
+            continue
+        # Single words leading up to an "X & Y" or "X and Y": one band
+        if all(len(p.split()) == 1 for p in parts[:i]) and \
+                any(re.search(r'\s(?:&|and)\s', p, re.I) for p in parts[i:i + 3]):
+            end = next(j for j in range(i, len(parts)) if re.search(r'\s(?:&|and)\s', parts[j], re.I))
+            if all(len(p.split()) == 1 for p in parts[i:end]):
+                name = ', '.join(parts[:end + 1])
+        break
+    return name.strip()
 
 
 def parse(raw: bytes):

@@ -75,6 +75,17 @@ def test_playlist_csv_columns_and_cleanup():
     assert tracks[0].query == 'A Song' and skipped == 1
 
 
+@pytest.mark.parametrize('raw, main', [
+    ('A; B', 'A'), ('A, B', 'A'), ('Drake, Rihanna', 'Drake'), ('Daft Punk', 'Daft Punk'),
+    ('Earth, Wind & Fire', 'Earth, Wind & Fire'), ('Earth, Wind & Fire, The Emotions', 'Earth, Wind & Fire'),
+    ('Crosby, Stills, Nash & Young', 'Crosby, Stills, Nash & Young'), ('Peter, Paul and Mary', 'Peter, Paul and Mary'),
+    ('Tyler, The Creator', 'Tyler, The Creator'), ('Tyler, The Creator, Kali Uchis', 'Tyler, The Creator'),
+    ('Simon & Garfunkel, Someone', 'Simon & Garfunkel'), ('Calvin Harris, Dua Lipa & X', 'Calvin Harris'),
+])
+def test_main_artist(raw, main):
+    assert playlist._main_artist(raw) == main
+
+
 def test_playlist_without_a_title_column_is_refused():
     with pytest.raises(UserError):
         playlist.parse(b'foo,bar\n1,2\n')
