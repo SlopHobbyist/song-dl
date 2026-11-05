@@ -8,9 +8,10 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 
 ## Differentiators
 
-- Easy for noobs, simply search then download.
-- We filter out crap like remixes live versions and files labeled "PRIVATE".
+- Easy for noobs, simply search then download
+- We filter out crap like remixe, live versions, and files labeled "PRIVATE"
 - Auto retries a different uploader if slow or stuck
+- Optional captcha solver for direct messages
 
 ## Page List
 
@@ -62,7 +63,7 @@ python -m songdl setup && python -m songdl serve
 
 ## License
 SLSKD is licensed under `GNU Affero GPLv3`.
-This repository and all contained code is licensed under `GNU GPLv3`. See .\LICENSE.txt for more info.
+This repository and all contained code is licensed under `GNU GPLv3`. See ./LICENSE.txt for more info.
 
 ## Disclosure
 
