@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>All Downloads · Song-DL</title>
 <meta name="description" content="Everything queued and downloading on the server.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
@@ -19,29 +20,20 @@
   <button class="button button-icon show-sm-only" type="button" data-drawer-open="nav-drawer" aria-label="Open navigation">
     <span class="icon">menu</span>
   </button>
-  <a class="topbar-title brand" href="index.html"><span class="icon text-primary">graphic_eq</span> Song-DL</a>
+  <a class="topbar-title brand" href="index.html">Song-DL</a>
   <nav class="topnav hide-sm" aria-label="Main">
     <a class="topnav-link" href="index.html">Download</a>
     <a class="topnav-link" href="server.html">Server mode</a>
     <a class="topnav-link" href="all.html" aria-current="page">All <span class="badge-count">4</span></a>
   </nav>
   <div class="topbar-actions">
-    <span class="chip hide-sm">Mockup</span>
-    <button class="button button-icon" type="button" data-theme-toggle data-theme-label aria-pressed="false">
-      <span class="icon">dark_mode</span>
-    </button>
-    <span class="avatar avatar-sm" title="Signed in as admin">AD</span>
-    <a class="button button-icon" href="index.html" aria-label="Sign out"><span class="icon">logout</span></a>
+    <a class="button button-icon" href="index.html" aria-label="Sign out" title="Sign out"><span class="icon">logout</span></a>
   </div>
 </header>
 
 <aside class="drawer" id="nav-drawer" data-open="false" aria-hidden="true" aria-label="Navigation">
   <div class="drawer-header">
-    <span class="avatar avatar-sm">AD</span>
-    <div class="grow" style="min-width: 0;">
-      <p class="text-subtitle-2 text-truncate">admin</p>
-      <p class="text-caption text-muted text-truncate">Signed in</p>
-    </div>
+    <span class="text-heading-3 grow">Song-DL</span>
     <button class="button button-icon button-icon-sm" type="button" data-drawer-close aria-label="Close navigation">
       <span class="icon">close</span>
     </button>
@@ -61,10 +53,7 @@
     <div class="container">
 
       <div class="row justify-between">
-        <div>
-          <h1 class="text-display-3">All downloads</h1>
-          <p class="page-lede mt-2">Everything queued or downloading on the server, from every admin.</p>
-        </div>
+        <h1 class="text-display-3">All downloads</h1>
         <div class="row row-tight">
           <button class="button button-outlined" type="button" data-action="pause-all"><span class="icon">pause</span> Pause all</button>
           <button class="button button-outlined" type="button" data-action="clear-done"><span class="icon">clear_all</span> Clear finished</button>
@@ -80,12 +69,10 @@
         <div class="stat">
           <span class="stat-label">Queued</span>
           <span class="stat-value" data-count="queued">2</span>
-          <span class="stat-delta text-muted"><span class="icon icon-sm">schedule</span> ~3 min left</span>
         </div>
         <div class="stat">
           <span class="stat-label">Paused or failed</span>
           <span class="stat-value" data-count="stopped">2</span>
-          <span class="stat-delta text-muted"><span class="icon icon-sm">error_outline</span> Needs attention</span>
         </div>
         <div class="stat">
           <span class="stat-label">Done today</span>
@@ -116,100 +103,21 @@
               <th scope="col">Song</th>
               <th scope="col" class="hide-sm">Folder</th>
               <th scope="col" class="hide-lg">Added by</th>
-              <th scope="col" class="col-progress">Status</th>
+              <th scope="col" class="col-status">Status</th>
+              <th scope="col" class="col-progress">Progress</th>
               <th scope="col" class="col-actions"><span class="visually-hidden">Actions</span></th>
             </tr>
           </thead>
-          <tbody id="queue-rows">
-            <tr data-status="downloading">
-              <td><div class="song-cell"><span class="text-medium">Glasswing</span><span class="text-caption text-muted">Northbound Static · FLAC</span></div></td>
-              <td class="hide-sm text-mono">road-trip-2026/</td>
-              <td class="hide-lg">admin</td>
-              <td>
-                <div class="status-cell">
-                  <div class="row justify-between row-nowrap"><span class="tag tag-info">Downloading</span><span class="text-caption text-muted" data-progress-label>62%</span></div>
-                  <div class="progress-linear" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Glasswing progress"><div class="progress-bar" style="--value: 62%;"></div></div>
-                </div>
-              </td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="downloading">
-              <td><div class="song-cell"><span class="text-medium">Copper Season</span><span class="text-caption text-muted">Marlow Fields · FLAC</span></div></td>
-              <td class="hide-sm text-mono">road-trip-2026/</td>
-              <td class="hide-lg">admin</td>
-              <td>
-                <div class="status-cell">
-                  <div class="row justify-between row-nowrap"><span class="tag tag-info">Downloading</span><span class="text-caption text-muted" data-progress-label>18%</span></div>
-                  <div class="progress-linear" role="progressbar" aria-valuenow="18" aria-valuemin="0" aria-valuemax="100" aria-label="Copper Season progress"><div class="progress-bar" style="--value: 18%;"></div></div>
-                </div>
-              </td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="queued">
-              <td><div class="song-cell"><span class="text-medium">Small Hours</span><span class="text-caption text-muted">Juniper Avenue · FLAC</span></div></td>
-              <td class="hide-sm text-mono">road-trip-2026/</td>
-              <td class="hide-lg">admin</td>
-              <td><div class="status-cell"><span class="tag">Queued · #1</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="queued">
-              <td><div class="song-cell"><span class="text-medium">Weather Vane</span><span class="text-caption text-muted">Ottoline · WAV</span></div></td>
-              <td class="hide-sm text-mono">archive/vinyl-rips/</td>
-              <td class="hide-lg">sam</td>
-              <td><div class="status-cell"><span class="tag">Queued · #2</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="paused">
-              <td><div class="song-cell"><span class="text-medium">Lighthouse Keeper</span><span class="text-caption text-muted">Ottoline · WAV</span></div></td>
-              <td class="hide-sm text-mono">archive/vinyl-rips/</td>
-              <td class="hide-lg">sam</td>
-              <td>
-                <div class="status-cell">
-                  <div class="row justify-between row-nowrap"><span class="tag tag-warning">Paused</span><span class="text-caption text-muted" data-progress-label>41%</span></div>
-                  <div class="progress-linear progress-paused" role="progressbar" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100" aria-label="Lighthouse Keeper progress"><div class="progress-bar" style="--value: 41%;"></div></div>
-                </div>
-              </td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="failed">
-              <td><div class="song-cell"><span class="text-medium">Signal Fires</span><span class="text-caption text-muted">The Dunmore Set · FLAC</span></div></td>
-              <td class="hide-sm text-mono">road-trip-2026/</td>
-              <td class="hide-lg">admin</td>
-              <td><div class="status-cell"><span class="tag tag-danger">Failed</span><span class="text-caption text-muted">Source timed out after 3 tries</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="done">
-              <td><div class="song-cell"><span class="text-medium">Paper Lanterns</span><span class="text-caption text-muted">The Quiet Harbor · FLAC</span></div></td>
-              <td class="hide-sm text-mono">road-trip-2026/</td>
-              <td class="hide-lg">admin</td>
-              <td><div class="status-cell"><span class="tag tag-success">Done</span><span class="text-caption text-muted">48.6 MB · 2 min ago</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="done">
-              <td><div class="song-cell"><span class="text-medium">Rooftop Choir</span><span class="text-caption text-muted">Bellweather · FLAC</span></div></td>
-              <td class="hide-sm text-mono">sunday-mix/</td>
-              <td class="hide-lg">sam</td>
-              <td><div class="status-cell"><span class="tag tag-success">Done</span><span class="text-caption text-muted">39.2 MB · 1 hr ago</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-            <tr data-status="done">
-              <td><div class="song-cell"><span class="text-medium">Morning Ferry</span><span class="text-caption text-muted">Bellweather · FLAC</span></div></td>
-              <td class="hide-sm text-mono">sunday-mix/</td>
-              <td class="hide-lg">sam</td>
-              <td><div class="status-cell"><span class="tag tag-success">Done</span><span class="text-caption text-muted">54.1 MB · 1 hr ago</span></div></td>
-              <td class="row-actions"></td>
-            </tr>
-          </tbody>
+          <tbody id="queue-rows" data-columns="song folder by status progress actions"></tbody>
         </table>
 
         <div class="empty-state" id="queue-empty" hidden>
           <span class="icon">inbox</span>
           <p class="text-heading-3">Nothing here</p>
-          <p class="text-body-2">No downloads match this filter.</p>
         </div>
 
         <div class="table-footer">
-          <span id="queue-summary">9 items</span>
+          <span id="queue-summary"></span>
         </div>
       </div>
     </div>
@@ -230,11 +138,9 @@
   </div>
 </dialog>
 
-<footer class="page-footer">
-  <div class="container row justify-between">
-    <span>Song-DL · mockup, no backend</span>
-    <span class="text-mono">signed in as admin</span>
-  </div>
+<footer class="site-footer">
+  <!-- TODO: point at the real repository -->
+  <a class="site-footer-link" href="#">Github</a>
 </footer>
 
 </body>

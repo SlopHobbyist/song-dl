@@ -1,14 +1,12 @@
 /* Song-DL — site styles on top of the vendored Wavefront kit.
-   Only reads the kit's tokens; no literal colors, so light and dark both work. */
+   Only reads the kit's tokens. The site is dark only: every page pins
+   data-theme="dark" on <html>, and main.js drops any stored light choice. */
+
+/* Several rules below give a container display:flex; keep [hidden] winning. */
+[hidden] { display: none !important; }
 
 /* ------------------------------------------------------------ Top bar */
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: inherit;
-  text-decoration: none;
-}
+.brand { color: inherit; text-decoration: none; }
 
 .topnav { display: flex; align-items: center; gap: var(--space-1); }
 
@@ -42,9 +40,18 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ------------------------------------------------------------- Hero */
-.hero { padding-top: var(--space-10); padding-bottom: var(--space-6); }
-.hero-compact { padding-top: var(--space-8); }
+/* ------------------------------------------------------------- Footer */
+.site-footer {
+  padding-block: var(--space-3);
+  background: none;
+  text-align: center;
+  font-size: var(--type-caption-size);
+}
+.site-footer-link { color: var(--color-on-surface-faint); text-decoration: none; }
+.site-footer-link:hover { color: var(--color-on-surface); text-decoration: underline; }
+
+/* ----------------------------------------------- Search / playlist panel */
+.hero { padding-top: var(--space-9); padding-bottom: var(--space-4); }
 
 .search-form { display: flex; flex-direction: column; gap: var(--space-4); }
 
@@ -62,6 +69,13 @@
 }
 
 .fieldset-bare { border: 0; padding: 0; margin: 0; min-width: 0; background: none; }
+
+.file-drop-compact {
+  flex-direction: row;
+  gap: var(--space-3);
+  height: calc(var(--size-control-lg) + var(--space-3));
+  padding-block: 0;
+}
 
 .search-sm { height: var(--size-control); max-width: 260px; }
 
@@ -82,8 +96,6 @@
 
 .result .detail-list dd { min-width: 0; }
 
-.or-divider { margin-block: var(--space-4); }
-
 .section-tight { padding-block: var(--space-6); }
 
 /* ------------------------------------------------------ Scan table */
@@ -95,57 +107,67 @@
 
 .is-missing .song-cell .text-medium { color: var(--color-on-surface-muted); }
 
-/* ------------------------------------------------------ Queue list */
-.queue-list { display: flex; flex-direction: column; gap: var(--space-2); }
+/* ------------------------------------- Homepage: fits the window, no scroll.
+   The search panel is centered by two equal spacers; once results arrive
+   they take the leftover height and scroll inside themselves. */
+.page-fixed { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.page-fixed > .topbar,
+.page-fixed > .site-footer { flex: none; }
 
-.queue-item {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  padding: var(--space-4);
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-}
-.queue-icon { color: var(--color-on-surface-muted); margin-top: 2px; }
-.queue-item[data-status="downloading"] .queue-icon { color: var(--color-primary-text); }
-.queue-main { flex: 1 1 auto; min-width: 0; }
+.home { flex: 1 1 auto; min-height: 0; display: flex; }
+.home-inner { display: flex; flex-direction: column; min-height: 0; padding-block: var(--space-5); }
+.home-inner > * { flex: none; }
+.home-spacer { flex: 1 1 0; }
 
-.queue-item.is-new { animation: song-dl-in var(--duration-base) var(--ease-standard); }
-@keyframes song-dl-in { from { opacity: 0; transform: translateY(-4px); } }
+.home-inner > .home-results { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.home-results > .result { flex: 0 1 auto; min-height: 0; }
+.home-results .scan-results,
+.home-results .scan-wrap { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.home-results .scan-wrap { overflow: hidden; }
+.home-results .scan-scroll { flex: 0 1 auto; min-height: 0; }
+.home-results .table-toolbar { flex: none; }
 
-/* ---------------------------------------------------------- All page */
+/* ------------------------------------------------------ Queue tables */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-4);
 }
 
-.queue-table .col-progress { width: 260px; }
+.queue-table .col-status   { width: 140px; }
+.queue-table .col-progress { width: 280px; }
 .queue-table .col-actions  { width: 1%; }
 
-.status-cell { display: flex; flex-direction: column; gap: var(--space-2); min-width: 160px; }
-.status-cell > .tag { align-self: flex-start; }
-
-.table .row-actions { white-space: nowrap; text-align: end; }
+.progress-cell { display: flex; align-items: center; gap: var(--space-3); min-width: 160px; }
+.progress-cell > .progress-linear { flex: 1 1 auto; }
+.progress-cell > .progress-value {
+  flex: none;
+  min-width: 4ch;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
 
 .progress-paused .progress-bar { background: var(--color-warning); }
+
+.table .row-actions { white-space: nowrap; text-align: end; }
 
 .table-toolbar { flex-wrap: wrap; }
 
 /* ------------------------------------------------------------ Login */
-.auth-page {
-  display: grid;
-  place-items: center;
-  min-height: calc(100vh - var(--size-topbar));
-}
+.auth-page { display: grid; place-items: center; }
+.auth-card-flat { box-shadow: none; }
 
 /* ------------------------------------------------------------ Small */
 @media (max-width: 720px) {
   .hero { padding-top: var(--space-7); }
   .result-body { flex-direction: column; }
   .cover { width: 96px; }
-  .search-form-row > .button { flex: 1 1 auto; }
+  .search-form-row > .row { flex: 1 1 100%; }
+  .search-form-row > .row > .button { flex: 1 1 0; white-space: nowrap; padding-inline: var(--space-3); }
+  .queue-table .col-status,
   .queue-table .col-progress { width: auto; }
+  .progress-cell { min-width: 96px; gap: var(--space-2); }
+  .queue-table th, .queue-table td { padding-inline: var(--space-3); }
   .search-sm { max-width: none; flex: 1 1 100%; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

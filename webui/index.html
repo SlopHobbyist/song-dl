@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Song-DL</title>
 <meta name="description" content="Search for a song or scan a playlist, then download it.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
@@ -11,76 +12,70 @@
 <script src="vendored/web-design-wavefront/design_language.js" defer></script>
 <script src="main.js" defer></script>
 </head>
-<body class="page" data-page="regular">
+<body class="page page-fixed" data-page="regular">
 
 <a class="skip-link" href="#main">Skip to content</a>
 
-<header class="topbar topbar-dynamic">
-  <button class="button button-icon show-sm-only" type="button" data-drawer-open="nav-drawer" aria-label="Open navigation">
-    <span class="icon">menu</span>
-  </button>
-  <a class="topbar-title brand" href="index.html"><span class="icon text-primary">graphic_eq</span> Song-DL</a>
-  <nav class="topnav hide-sm" aria-label="Main">
-    <a class="topnav-link" href="index.html" aria-current="page">Download</a>
-  </nav>
+<header class="topbar">
+  <a class="topbar-title brand" href="index.html">Song-DL</a>
   <div class="topbar-actions">
-    <span class="chip hide-sm">Mockup</span>
-    <button class="button button-icon" type="button" data-theme-toggle data-theme-label aria-pressed="false">
-      <span class="icon">dark_mode</span>
-    </button>
     <a class="button button-outlined button-sm" href="login.html"><span class="icon icon-sm">admin_panel_settings</span> Admin</a>
   </div>
 </header>
 
-<aside class="drawer" id="nav-drawer" data-open="false" aria-hidden="true" aria-label="Navigation">
-  <div class="drawer-header">
-    <span class="icon text-primary">graphic_eq</span>
-    <span class="text-heading-3 grow">Song-DL</span>
-    <button class="button button-icon button-icon-sm" type="button" data-drawer-close aria-label="Close navigation">
-      <span class="icon">close</span>
-    </button>
-  </div>
-  <nav class="drawer-body">
-    <a class="nav-item" href="index.html" aria-current="page"><span class="icon">download</span> Download</a>
-    <a class="nav-item" href="login.html"><span class="icon">admin_panel_settings</span> Admin sign in</a>
-  </nav>
-</aside>
+<main id="main" class="home">
+  <div class="container container-narrow home-inner">
+    <div class="home-spacer"></div>
 
-<main id="main" class="page-body">
+    <h1 class="text-display-3 text-center" id="home-title" data-title-search="Find a song" data-title-playlist="Scan a playlist">Find a song</h1>
 
-  <!-- =================================================== Search a song -->
-  <section class="hero">
-    <div class="container container-narrow">
-      <h1 class="text-display-3 text-center">Find a song</h1>
-      <p class="page-lede text-center mt-3">Search by title and artist, pick a format, and download it straight to your computer.</p>
-
-      <form class="search-form mt-6" id="search-form" autocomplete="off">
-        <div class="search search-hero">
-          <span class="icon">search</span>
-          <input type="search" id="q" name="q" placeholder="Song title, artist" aria-label="Song name" value="">
-        </div>
-        <div class="search-form-row">
-          <fieldset class="fieldset fieldset-bare">
-            <legend class="visually-hidden">Format</legend>
-            <div class="choice-group choice-group-row">
-              <label class="choice choice-radio">
-                <input type="radio" name="format" value="FLAC" checked>
-                <span class="choice-box"></span>
-                <span class="choice-label">FLAC</span>
-              </label>
-              <label class="choice choice-radio">
-                <input type="radio" name="format" value="WAV">
-                <span class="choice-box"></span>
-                <span class="choice-label">WAV</span>
-              </label>
-            </div>
-          </fieldset>
+    <!-- =================================================== Search a song -->
+    <form class="search-form mt-6" id="search-form" data-panel="search" autocomplete="off">
+      <div class="search search-hero">
+        <span class="icon">search</span>
+        <input type="search" id="q" name="q" placeholder="Song title, artist" aria-label="Song name">
+      </div>
+      <div class="search-form-row">
+        <fieldset class="fieldset fieldset-bare">
+          <legend class="visually-hidden">Format</legend>
+          <div class="choice-group choice-group-row">
+            <label class="choice choice-radio"><input type="radio" name="format" value="FLAC" checked><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
+            <label class="choice choice-radio"><input type="radio" name="format" value="WAV"><span class="choice-box"></span><span class="choice-label">WAV</span></label>
+          </div>
+        </fieldset>
+        <div class="row row-tight">
+          <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon">upload_file</span> Upload playlist</button>
           <button class="button button-filled button-lg" type="submit"><span class="icon">search</span> Search</button>
         </div>
-      </form>
+      </div>
+    </form>
 
-      <!-- Result: hidden until a search is made -->
-      <div class="result mt-6" id="search-result" hidden>
+    <!-- ================================================= Playlist upload -->
+    <div class="search-form mt-6" id="playlist-form" data-panel="playlist" hidden>
+      <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV">
+        <span class="icon">upload_file</span>
+        <span class="text-subtitle">Drop a playlist CSV here, or click to browse</span>
+        <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
+      </div>
+      <div class="file-list" id="csv-list"></div>
+      <div class="search-form-row">
+        <fieldset class="fieldset fieldset-bare">
+          <legend class="visually-hidden">Playlist format</legend>
+          <div class="choice-group choice-group-row">
+            <label class="choice choice-radio"><input type="radio" name="csv-format" value="FLAC" checked><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
+            <label class="choice choice-radio"><input type="radio" name="csv-format" value="WAV"><span class="choice-box"></span><span class="choice-label">WAV</span></label>
+          </div>
+        </fieldset>
+        <div class="row row-tight">
+          <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon">search</span> Search a song</button>
+          <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and scan</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================= Results -->
+    <div class="home-results mt-6">
+      <div class="result scroll-y" id="search-result" hidden>
         <article class="card">
           <div class="card-body result-body">
             <div class="cover" aria-hidden="true"><span class="icon icon-lg">album</span></div>
@@ -101,82 +96,50 @@
             </div>
           </div>
           <div class="card-actions card-actions-end">
-            <button class="button button-text" type="button" data-action="clear-search">Search again</button>
             <button class="button button-filled" type="button" data-action="download-one"><span class="icon">download</span> Download</button>
           </div>
         </article>
       </div>
-    </div>
-  </section>
 
-  <div class="container container-narrow">
-    <p class="auth-divider or-divider">or</p>
-  </div>
-
-  <!-- ================================================= Playlist upload -->
-  <section class="section">
-    <div class="container container-narrow">
-      <h2 class="text-heading-1">Scan a playlist</h2>
-      <p class="text-body-2 text-muted mt-2">Upload a CSV export of a playlist. We'll check which songs are on the server.</p>
-
-      <div class="stack mt-5">
-        <div class="file-drop" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV">
-          <span class="icon icon-lg">upload_file</span>
-          <span class="text-subtitle">Drop a playlist CSV here, or click to browse</span>
-          <span class="text-caption">Needs a title and artist column</span>
-          <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
-        </div>
-        <div class="file-list" id="csv-list"></div>
-        <div class="row justify-between">
-          <fieldset class="fieldset fieldset-bare">
-            <legend class="visually-hidden">Playlist format</legend>
-            <div class="choice-group choice-group-row">
-              <label class="choice choice-radio"><input type="radio" name="csv-format" value="FLAC" checked><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
-              <label class="choice choice-radio"><input type="radio" name="csv-format" value="WAV"><span class="choice-box"></span><span class="choice-label">WAV</span></label>
-            </div>
-          </fieldset>
-          <button class="button button-filled" type="button" id="scan-button"><span class="icon">fact_check</span> Upload and scan</button>
-        </div>
-      </div>
-
-      <div class="scan-loading mt-6" id="scan-loading" hidden>
-        <p class="text-body-2 text-muted mb-2">Scanning 12 songs…</p>
+      <div id="scan-loading" hidden>
         <div class="progress-linear is-indeterminate" role="progressbar" aria-label="Scanning"><div class="progress-bar"></div></div>
       </div>
 
-      <div class="mt-6" id="scan-results" hidden>
-        <div class="table-wrap">
+      <div class="scan-results" id="scan-results" hidden>
+        <div class="table-wrap scan-wrap">
           <div class="table-toolbar">
             <div class="grow">
-              <span class="text-heading-3">road-trip-2026.csv</span>
-              <p class="text-caption text-muted"><strong class="text-success">9 found</strong> · 3 not on the server · FLAC</p>
+              <span class="text-heading-3" data-scan-name>road-trip-2026.csv</span>
+              <p class="text-caption text-muted" data-scan-summary></p>
             </div>
             <button class="button button-filled" type="button" data-action="download-all"><span class="icon">download</span> Download all (9)</button>
           </div>
-          <table class="table table-hover">
-            <caption class="visually-hidden">Songs in the uploaded playlist and whether each was found</caption>
-            <thead>
-              <tr>
-                <th scope="col" class="table-numeric col-index">#</th>
-                <th scope="col">Song</th>
-                <th scope="col">Status</th>
-                <th scope="col" class="table-numeric hide-sm">Size</th>
-                <th scope="col" class="col-action"><span class="visually-hidden">Download</span></th>
-              </tr>
-            </thead>
-            <tbody id="scan-rows"></tbody>
-          </table>
+          <div class="scan-scroll scroll-y">
+            <table class="table table-hover table-sticky">
+              <caption class="visually-hidden">Songs in the uploaded playlist and whether each was found</caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="table-numeric col-index">#</th>
+                  <th scope="col">Song</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" class="table-numeric hide-sm">Size</th>
+                  <th scope="col" class="col-action"><span class="visually-hidden">Download</span></th>
+                </tr>
+              </thead>
+              <tbody id="scan-rows"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
-  </section>
+
+    <div class="home-spacer"></div>
+  </div>
 </main>
 
-<footer class="page-footer">
-  <div class="container row justify-between">
-    <span>Song-DL · mockup, no backend</span>
-    <a class="link-arrow" href="login.html">Admin sign in <span class="icon icon-sm">arrow_forward</span></a>
-  </div>
+<footer class="site-footer">
+  <!-- TODO: point at the real repository -->
+  <a class="site-footer-link" href="#">Github</a>
 </footer>
 
 </body>
