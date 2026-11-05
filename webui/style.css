@@ -40,6 +40,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------- Left-edge shadow
+   On pages with a nav drawer, the closed drawer parks just off-screen and its
+   shadow bleeds onto the left edge of the page. Pages without a drawer (home,
+   login) get the same shadow from an equivalent off-screen strip. */
+body:not(:has(.drawer))::before {
+  content: '';
+  position: fixed;
+  top: 0; bottom: 0;
+  left: calc(-1 * var(--size-drawer) - 3px);
+  width: var(--size-drawer);
+  box-shadow: var(--shadow-16);
+  pointer-events: none;
+  z-index: var(--layer-dialog);
+}
+
 /* ------------------------------------------------------------- Footer */
 .site-footer {
   padding-block: var(--space-3);
