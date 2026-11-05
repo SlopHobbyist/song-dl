@@ -2,6 +2,7 @@
 webui/vendored/web-design-wavefront
 .playwright-mcp
 *.log
+old
 
 # macOS
 .DS_Store
