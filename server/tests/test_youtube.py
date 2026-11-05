@@ -53,6 +53,19 @@ def test_playlist_links_are_recognised():
         assert youtube.playlist_id(link) is None, link
 
 
+def test_every_way_youtube_shares_a_playlist():
+    for link in ('https://www.youtube.com/playlist?list=PLKxmRL6AnoXI',
+                 'https://youtube.com/playlist?list=PLKxmRL6AnoXI&si=NOU5R7FTFQRmu_AK',
+                 'https://youtu.be/playlist?list=PLKxmRL6AnoXI',
+                 'https://www.youtube.com/watch?v=SMVqAJcX9I4&list=PLKxmRL6AnoXI&index=1',
+                 'https://music.youtube.com/playlist?list=PLKxmRL6AnoXI&si=pXC_Htm0K52WiQIv'):
+        assert youtube.playlist_id(link) == 'PLKxmRL6AnoXI', link
+    for video in ('https://www.youtube.com/watch?v=SMVqAJcX9I4',
+                  'https://youtu.be/SMVqAJcX9I4?si=qEkpPHs7BJS4Lpkg',
+                  'https://music.youtube.com/watch?v=CQ3Ya0ny1wo'):
+        assert youtube.playlist_id(video) is None, video
+
+
 def entry(title, channel, duration=200, vid='abc'):
     return {'_type': 'url', 'id': vid, 'url': f'https://www.youtube.com/watch?v={vid}',
             'title': title, 'channel': channel, 'duration': duration}
