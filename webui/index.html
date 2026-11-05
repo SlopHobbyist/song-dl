@@ -17,11 +17,38 @@
 <a class="skip-link" href="#main">Skip to content</a>
 
 <header class="topbar">
+  <!-- The menu, links and sign out are shown once main.js sees an admin is signed in -->
+  <button class="button button-icon show-sm-only" type="button" data-drawer-open="nav-drawer" aria-label="Open navigation" data-signed-in hidden>
+    <span class="icon" aria-hidden="true">menu</span>
+  </button>
   <a class="topbar-title brand" href="/">Song-DL</a>
+  <nav class="topnav hide-sm" aria-label="Main" data-signed-in hidden>
+    <a class="topnav-link" href="/" aria-current="page">Browser</a>
+    <a class="topnav-link" href="/server/">Server</a>
+    <a class="topnav-link" href="/all/">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+  </nav>
   <div class="topbar-actions">
     <a class="button button-outlined button-sm" id="admin-link" href="/login/" aria-label="Admin sign in" title="Admin sign in"><span class="icon icon-sm" aria-hidden="true">admin_panel_settings</span></a>
+    <a class="button button-icon" href="/" data-action="logout" aria-label="Sign out" title="Sign out" data-signed-in hidden><span class="icon" aria-hidden="true">logout</span></a>
   </div>
 </header>
+
+<aside class="drawer" id="nav-drawer" data-open="false" aria-hidden="true" aria-label="Navigation" data-signed-in hidden>
+  <div class="drawer-header">
+    <span class="text-heading-3 grow">Song-DL</span>
+    <button class="button button-icon button-icon-sm" type="button" data-drawer-close aria-label="Close navigation">
+      <span class="icon" aria-hidden="true">close</span>
+    </button>
+  </div>
+  <nav class="drawer-body" aria-label="Main">
+    <a class="nav-item" href="/" aria-current="page"><span class="icon" aria-hidden="true">download</span> Browser</a>
+    <a class="nav-item" href="/server/"><span class="icon" aria-hidden="true">dns</span> Server</a>
+    <a class="nav-item" href="/all/"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+  </nav>
+  <div class="drawer-footer">
+    <a class="nav-item" href="/" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
+  </div>
+</aside>
 
 <main id="main" tabindex="-1" class="home">
   <div class="container container-narrow home-inner">
@@ -111,6 +138,13 @@
             </div>
           </div>
           <div class="card-actions card-actions-end">
+            <div class="fetch-status" data-fetch-status hidden>
+              <div class="progress-cell">
+                <div class="progress-linear is-indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Download progress"><div class="progress-bar"></div></div>
+                <span class="text-caption text-muted progress-value" aria-hidden="true"></span>
+              </div>
+              <p class="text-caption text-muted fetch-note" data-fetch-note></p>
+            </div>
             <button class="button button-filled" type="button" data-action="download-one"><span class="icon" aria-hidden="true">download</span> Download</button>
           </div>
         </article>
@@ -126,6 +160,13 @@
             <div class="grow">
               <span class="text-heading-3" data-scan-name>road-trip-2026.csv</span>
               <p class="text-caption text-muted" data-scan-summary></p>
+              <div class="fetch-status mt-2" data-fetch-status hidden>
+                <div class="progress-cell">
+                  <div class="progress-linear is-indeterminate" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Download progress"><div class="progress-bar"></div></div>
+                  <span class="text-caption text-muted progress-value" aria-hidden="true"></span>
+                </div>
+                <p class="text-caption text-muted fetch-note" data-fetch-note></p>
+              </div>
             </div>
             <button class="button button-filled" type="button" data-action="download-all"><span class="icon" aria-hidden="true">download</span> Download all (9)</button>
           </div>

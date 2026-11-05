@@ -239,12 +239,26 @@
           var folder = $('#subfolder');
           if (folder) folder.dispatchEvent(new Event('input'));
         }
-        /* Signed in? The admin button on the home page goes to the Server page. */
+        /* Signed in? The home page gets the admin pages' navigation in place of
+           the sign-in button, with the All page's count of active downloads. */
         if (!admin || !session.user) return;
-        admin.setAttribute('href', '/server/');
-        admin.setAttribute('aria-label', 'Server');
-        admin.setAttribute('title', 'Server');
-        $('.icon', admin).textContent = 'dns';
+        function signedIn(yes) {
+          admin.hidden = yes;
+          $$('[data-signed-in]').forEach(function (el) { el.hidden = !yes; });
+        }
+        signedIn(true);
+        var signedOut = false;
+        poll(async function () {
+          if (signedOut) return;
+          try {
+            setActiveCount((await api('GET', '/api/queue')).active);
+          } catch (e) {
+            if (e.status !== 401) throw e;
+            /* The session ended while the page was open */
+            signedOut = true;
+            signedIn(false);
+          }
+        }, 5000);
       }, function () {});
     }
   }
@@ -313,17 +327,15 @@
 
   /* Has the server fetch each result from Soulseek, `concurrency` at a time,
      and waits for all of them. Returns the final state of every job, in order.
-     onUpdate(finished, total, progress 0..1) is called as it goes. */
+     onUpdate(summary) is called as it goes; see fetchSummary. The server stops
+     a fetch once the page stops asking about it, so leaving the page cancels. */
   async function fetchFiles(resultIds, concurrency, onUpdate) {
     var jobs = new Array(resultIds.length);
-    var progress = resultIds.map(function () { return 0; });
+    var views = resultIds.map(function () { return null; });
     var next = 0;
-    var finished = 0;
 
     function report() {
-      if (!onUpdate) return;
-      var total = progress.reduce(function (sum, p) { return sum + p; }, 0);
-      onUpdate(finished, resultIds.length, total / resultIds.length);
+      if (onUpdate) onUpdate(fetchSummary(views));
     }
 
     async function worker() {
@@ -335,7 +347,7 @@
           for (;;) {
             var res = await api('GET', '/api/downloads?id=' + encodeURIComponent(started.id));
             view = res.jobs[started.id];
-            progress[i] = view.progress || 0;
+            views[i] = view;
             report();
             if (view.state !== 'running') break;
             await sleep(1000);
@@ -345,8 +357,7 @@
         } catch (e) {
           jobs[i] = { state: 'failed', error: e.message };
         }
-        progress[i] = 1;
-        finished++;
+        views[i] = jobs[i];
         report();
       }
     }
@@ -355,6 +366,61 @@
     for (var w = 0; w < Math.min(concurrency, resultIds.length); w++) workers.push(worker());
     await Promise.all(workers);
     return jobs;
+  }
+
+  /* Where a set of fetches stands: { done, total, progress, speed, note, short }.
+     progress is 0..1, or null while no bytes have arrived yet (requesting the
+     file, waiting in the uploader's queue). A failed fetch counts as finished. */
+  function fetchSummary(views) {
+    var total = views.length;
+    var done = 0, sum = 0, speed = 0, running = [];
+    views.forEach(function (v) {
+      if (!v) return;
+      if (v.state !== 'running') { done++; sum += 1; return; }
+      sum += v.progress || 0;
+      speed += v.speed || 0;
+      running.push(v);
+    });
+    var progress = sum > 0 ? Math.min(1, sum / total) : null;
+    var note;
+    if (total > 2) {
+      note = done + ' of ' + total + ' files ready';
+    } else {
+      /* One song, maybe in two formats: say what each copy is doing */
+      note = running.map(function (v) {
+        return (running.length > 1 ? v.format + ': ' : '') + (v.note || 'Starting');
+      }).join(' · ');
+    }
+    if (speed) note += (note ? ' · ' : '') + formatSpeed(speed);
+    /* A word for small spaces: the percentage, or what it's waiting on */
+    var queued = running.some(function (v) { return /queued/i.test(v.note || ''); });
+    var short = progress !== null ? Math.round(progress * 100) + '%' : queued ? 'Queued' : 'Requesting';
+    return { done: done, total: total, progress: progress, speed: speed, note: note, short: short };
+  }
+
+  /* Fills in a [data-fetch-status] bar from a fetchSummary. */
+  function showFetch(el, summary) {
+    if (!el) return;
+    el.hidden = false;
+    var bar = $('.progress-linear', el);
+    var note = $('[data-fetch-note]', el);
+    var pct = summary.progress === null ? null : Math.round(summary.progress * 100);
+    bar.classList.toggle('is-indeterminate', pct === null);
+    if (pct === null) {
+      bar.removeAttribute('aria-valuenow');
+      bar.setAttribute('aria-valuetext', summary.note || 'Starting');
+    } else {
+      bar.setAttribute('aria-valuenow', pct);
+      bar.setAttribute('aria-valuetext', pct + '%');
+    }
+    $('.progress-bar', bar).style.setProperty('--value', (pct || 0) + '%');
+    setText($('.progress-value', el), pct === null ? '' : pct + '%');
+    setText(note, summary.note || 'Starting');
+    note.title = summary.note || '';
+  }
+
+  function hideFetch(el) {
+    if (el) el.hidden = true;
   }
 
   /* Hands finished files to the browser: one by one, or as a single zip. */
@@ -436,6 +502,7 @@
         tag.textContent = text;
         tags.appendChild(tag);
       });
+      hideFetch($('[data-fetch-status]', result));
       result.hidden = false;
       var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
         found.map(function (r) { return r.format; }).join(' and ') + '.' +
@@ -514,14 +581,18 @@
       var ids = found.map(function (r) { return r.id; });
 
       if (action === 'download-one') {
+        var meter = $('[data-fetch-status]', result);
         setBusy(button, 'Fetching');
+        showFetch(meter, fetchSummary(ids.map(function () { return null; })));
         try {
-          var jobs = await fetchFiles(ids, ids.length, function (done, total, progress) {
-            setBusy(button, progress > 0 ? 'Fetching ' + Math.round(progress * 100) + '%' : 'Fetching');
+          var jobs = await fetchFiles(ids, ids.length, function (summary) {
+            setBusy(button, summary.progress !== null ? 'Fetching ' + summary.short : 'Fetching');
+            showFetch(meter, summary);
           });
           await deliver(jobs, '"' + title + '"');
         } finally {
           setIdle(button);
+          hideFetch(meter);
         }
       } else if (action === 'queue-one') {
         setBusy(button, 'Queueing');
@@ -686,8 +757,11 @@
           if (scan.job.state === 'running' || !found.length) return;
           setBusy(target, 'Fetching');
           var all = resultIds(found);
-          var jobs = await fetchFiles(all, 3, function (done, total) {
-            setBusy(target, 'Fetching ' + done + ' of ' + total + ' files');
+          var meter = $('[data-fetch-status]', results);
+          showFetch(meter, fetchSummary(all.map(function () { return null; })));
+          var jobs = await fetchFiles(all, 3, function (summary) {
+            setBusy(target, summary.progress !== null ? 'Fetching ' + Math.round(summary.progress * 100) + '%' : 'Fetching');
+            showFetch(meter, summary);
           });
           var zipName = scan.job.name.replace(/\.csv$/i, '');
           await deliver(jobs, found.length + ' songs', zipName);
@@ -704,7 +778,20 @@
           target.innerHTML = '<span class="icon icon-sm" aria-hidden="true">hourglass_top</span>';
           var ok;
           if (action === 'download-row') {
-            ok = await deliver(await fetchFiles(ids, ids.length), label);
+            var statusCell = $('.cell-status', target.closest('tr'));
+            try {
+              ok = await deliver(await fetchFiles(ids, ids.length, function (summary) {
+                target.innerHTML = summary.progress !== null
+                  ? '<span class="fetch-pct" aria-hidden="true">' + summary.short + '</span>'
+                  : '<span class="icon icon-sm" aria-hidden="true">hourglass_top</span>';
+                target.title = summary.note;
+                statusCell.innerHTML = '<span class="tag tag-info" title="' + escapeHtml(summary.note) + '">' +
+                  escapeHtml(summary.progress !== null ? 'Downloading ' + summary.short : summary.short) + '</span>';
+              }), label);
+            } finally {
+              statusCell.innerHTML = SCAN_TAGS.found;
+              target.title = target.getAttribute('aria-label');
+            }
           } else {
             ok = (await queueResults(ids, label)).queued > 0;
           }
@@ -730,6 +817,7 @@
         }
       } finally {
         if (action === 'download-all' || action === 'queue-all') {
+          hideFetch($('[data-fetch-status]', results));
           setIdle(target);
           updateSummary(scan.job);
         }

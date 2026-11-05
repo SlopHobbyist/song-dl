@@ -110,6 +110,15 @@ main:focus { outline: none; }
 
 .result .detail-list dd { min-width: 0; }
 
+/* What a fetch for the browser is doing: a bar with its percentage, and the
+   uploader's side of it underneath (requesting, queued, speed). In the result
+   card it takes the room left of the Download button. */
+.fetch-status { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.card-actions > .fetch-status { flex: 1 1 auto; padding-inline: var(--space-2); }
+.fetch-status > .progress-cell { min-width: 0; }
+.fetch-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fetch-pct { font-size: var(--type-caption-size); font-variant-numeric: tabular-nums; }
+
 .section-tight { padding-block: var(--space-6); }
 
 /* ------------------------------------------------------ Scan table */

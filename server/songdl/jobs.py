@@ -25,6 +25,8 @@ log = logging.getLogger('songdl')
 JOB_TTL = 3600                # seconds a finished job is kept
 ENTRY_TTL = 2 * 3600          # seconds a found file can still be downloaded after it was last used
 SCAN_IDLE = 120               # a running scan nobody has polled for this long is abandoned
+DOWNLOAD_IDLE = 180           # ...and a running download. Long enough for a background tab, which a
+                              # browser may let poll only once a minute
 SEARCH_SLOTS = 4              # playlist searches running at once, across all users
 MAX_SCANS = 3                 # playlists scanned at once
 MAX_DOWNLOADS_PER_IP = 8      # files one visitor can be fetching at once
@@ -199,6 +201,21 @@ class DownloadJob(Job):
         self.file = None    # URL of the finished file
         self.name = None    # file name to give the visitor
         self.path = None
+        self.polled = time.monotonic()
+        self.task = None
+
+    def seen(self):
+        self.polled = self.updated = time.monotonic()
+        self.entry.touch()
+
+    def abandon(self):
+        """Stops a download nobody is waiting for. Only the visitor's page knows the job, so once it
+        stops asking, nobody could ever get the file. The copy from Soulseek is cancelled too, unless
+        something else (the server queue, another visitor) wants the same file."""
+        if self.state == 'running':
+            self.fail('Stopped because the page that asked for it was closed.')
+        if self.task:
+            self.task.cancel()
 
     def view(self):
         return {
@@ -315,7 +332,7 @@ class Manager:
             raise UserError(LOW_DISK, 507)
         job = DownloadJob(entry, ip)
         self.downloads[job.id] = job
-        self.engine.spawn(job.guard(self._download(job)))
+        job.task = self.engine.spawn(job.guard(self._download(job)))
         return job
 
     async def _download(self, job: DownloadJob):
@@ -341,6 +358,10 @@ class Manager:
             if job.state == 'running' and now - job.polled > SCAN_IDLE:
                 log.info('scan %s abandoned', job.id)
                 job.cancel()
+        for job in self.downloads.values():
+            if job.state == 'running' and now - job.polled > DOWNLOAD_IDLE:
+                log.info('download %s of %r abandoned', job.id, job.entry.title)
+                job.abandon()
         # Found files stay for a while after last use; a queue item keeps its own copy of the list
         for eid in [e for e, entry in self.entries.items() if now - entry.used > ENTRY_TTL]:
             del self.entries[eid]

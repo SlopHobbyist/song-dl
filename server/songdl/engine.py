@@ -381,8 +381,9 @@ class Engine:
 
     def schedule_rescan(self):
         """Shares new downloads soon. Many uploaders throttle or refuse users who
-        share nothing, so the share should never lag far behind."""
-        if self.cfg.share and not self.rescan_pending:
+        share nothing, so the share should never lag far behind. The downloads
+        folder may be inside one of the extra shares, so those count too."""
+        if (self.cfg.share or self.cfg.extra_shares) and not self.rescan_pending:
             self.rescan_pending = True
             self.spawn(self._rescan())
 

@@ -103,6 +103,23 @@ async def test_download_to_the_browser_and_zip(site, fake):
     assert sorted(names) == ['Daft Punk - Digital Love.flac', 'Daft Punk - Digital Love.wav']
 
 
+async def test_a_download_nobody_waits_for_is_stopped(site, fake, monkeypatch):
+    fake.speed = 0.25   # 16 seconds, so it is still going when the page "closes"
+    job = await search(site, 'daft punk digital love', ['flac'])
+    jid = await fetch(site, job['results'][0]['id'])
+    await wait_for(lambda: downloads(site, [jid]), lambda j: j[jid]['progress'])
+    await asyncio.sleep(0.3)
+    assert (await downloads(site, [jid]))[jid]['state'] == 'running'   # still polled: kept going
+
+    monkeypatch.setattr('songdl.jobs.DOWNLOAD_IDLE', 0)   # as if nobody had asked for a while
+    site.manager.prune()
+    await asyncio.sleep(0.3)
+    monkeypatch.setattr('songdl.jobs.DOWNLOAD_IDLE', 180)
+    view = (await downloads(site, [jid]))[jid]
+    assert view['state'] == 'failed' and 'closed' in view['error']
+    assert all(t.get('cancelled') for t in fake.transfers.values())   # slskd stopped fetching it too
+
+
 async def test_files_are_only_served_from_fetch_folders(site, fake, tmp_path):
     (tmp_path / 'downloads' / 'private').mkdir(parents=True)
     (tmp_path / 'downloads' / 'private' / 'secret.flac').write_bytes(b'fLaC')

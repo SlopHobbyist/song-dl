@@ -16,7 +16,8 @@ downloads:
   # With Docker, write the folder's path inside the containers (like /music) and mount it at that
   # same path in both the app and slskd services in docker-compose.yaml.
   server_folder:
-  share: True # if the downloads folder and server folder should be shared on Soulseek
+  share: True # if the downloads folder and server folder should be shared on Soulseek. Set False when
+              # they are already inside one of extra_shares, so they aren't shared twice.
   # More folders to share on Soulseek, as slskd sees them. "[Name]/path" shows /path as Name.
   # With Docker, mount each one into the slskd service in docker-compose.yaml (read only is fine).
   extra_shares: []
@@ -36,9 +37,11 @@ webserver:
   # Admins can sign in at /login/ to save songs on the server (Server page) and
   # manage the queue (All page). Passwords must be at least 8 characters. Left as change-me-please,
   # a random 32 character password is made on first start and saved here.
+  # Add a line per admin, each with their own name and password; the queue shows who added what.
   # Remove the users to turn the admin pages off.
   admins:
     admin: change-me-please
+  #  someone-else: change-me-please
   # Optional Cloudflare Turnstile on the admin sign-in. Create a widget at
   # https://dash.cloudflare.com/?to=/:account/turnstile and paste both keys.
   turnstile:

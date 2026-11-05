@@ -262,8 +262,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         for jid in request.query.getall('id', [])[:MAX_ZIP_FILES]:
             job = manager.downloads.get(jid)
             if job:
-                job.updated = time.monotonic()
-                job.entry.touch()
+                job.seen()
             views[jid] = job.view() if job else {'state': 'failed', 'error': 'That download has expired. Please try again.'}
         return web.json_response({'jobs': views})
 
