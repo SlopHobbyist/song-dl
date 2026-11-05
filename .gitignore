@@ -1,5 +1,4 @@
 # Project Specific
-webui/vendored/web-design-wavefront
 .playwright-mcp
 *.log
 old
