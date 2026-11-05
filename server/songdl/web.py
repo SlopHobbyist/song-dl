@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import imports, jobs, matching, playlist, spotify, turnstile
+from . import imports, jobs, matching, playlist, spotify, turnstile, youtube
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -124,6 +124,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     importer = imports.Importer(cfg, manager.engine, queue)
     zips = {}   # token -> (time made, [download job ids], name)
     spotify_reader = spotify.Spotify()
+    youtube_reader = youtube.YouTube()
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
     webui = cfg.webui_dir
@@ -255,21 +256,27 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         return web.json_response({'id': job.id})
 
     async def playlist_link(request):
-        """A Spotify playlist link -> the whole playlist as a CSV. The page offers the CSV
-        to save, and scans it through /api/scan like any uploaded file."""
+        """A Spotify or YouTube playlist link -> the whole playlist as a CSV. The page offers
+        the CSV to save, and scans or imports it like any uploaded file."""
         data = await read_json(request)
         link = str(data.get('url') or '').strip()[:2000]
-        pid = spotify.playlist_id(link)
-        if not pid:
-            raise UserError('That isn\'t a Spotify playlist link. It should look like '
-                            'https://open.spotify.com/playlist/…')
+        if pid := spotify.playlist_id(link):
+            source, reader = 'spotify', spotify_reader
+        elif pid := youtube.playlist_id(link):
+            source, reader = 'youtube', youtube_reader
+        else:
+            raise UserError('That isn\'t a Spotify or YouTube playlist link. It should look like '
+                            'https://open.spotify.com/playlist/… or https://www.youtube.com/playlist?list=…')
         limit(request, 'link')
-        found = await spotify_reader.playlist(pid)
-        log.info('playlist link from %s: spotify %s, %r, %d songs', client_ip(request), pid, found.name, len(found.rows))
+        found = await reader.playlist(pid)
+        unavailable = getattr(found, 'unavailable', 0)
+        log.info('playlist link from %s: %s %s, %r, %d songs', client_ip(request), source, pid, found.name, len(found.rows))
         return web.json_response({
+            'source': source,
             'name': found.name,
             'owner': found.owner,
-            'total': len(found.rows),
+            'total': len(found.rows) - unavailable,
+            'unavailable': unavailable,
             'csv': found.csv(),
             'filename': clean_name(found.name, None, default='playlist') + '.csv',
             'maxScan': playlist.MAX_TRACKS,

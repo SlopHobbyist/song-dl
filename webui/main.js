@@ -318,15 +318,19 @@
   }
 
   /* --------------------------------------------------- Playlist links
-     A Spotify playlist link, pasted in the song search box or the playlist
+     A Spotify or YouTube playlist link, pasted in the song search box or the playlist
      panel's link field, is read by the server into a CSV of the whole
      playlist. The CSV then stands in for an uploaded file: it can be saved
      for later, or scanned like any other. */
 
   var SPOTIFY_PLAYLIST = /(?:\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:embed\/)?(?:user\/[^\/\s]+\/)?playlist\/|\bspotify:(?:user:[^:\s]+:)?playlist:)[A-Za-z0-9]{22}\b/;
   var SPOTIFY_OTHER = /\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:track|album|artist|episode|show)\//;
+  /* youtube.com/playlist?list=, watch?v=…&list=, youtu.be/…?list=, music.youtube.com/… */
+  var YOUTUBE_PLAYLIST = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)\/\S*?[?&]list=[A-Za-z0-9_-]{10,64}/;
+  var YOUTUBE_OTHER = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch|shorts|@|channel)|youtu\.be\/)/;
 
-  function isPlaylistLink(text) { return SPOTIFY_PLAYLIST.test(text || ''); }
+  function isPlaylistLink(text) { return SPOTIFY_PLAYLIST.test(text || '') || YOUTUBE_PLAYLIST.test(text || ''); }
+  function linkSource(text) { return YOUTUBE_PLAYLIST.test(text || '') ? 'YouTube' : 'Spotify'; }
 
   /* The playlist read from a link: { url, file, name, total, maxScan }, or null
      when the playlist panel holds an uploaded file (or nothing). */
@@ -370,11 +374,12 @@
       if (importButton) importButton.removeAttribute('aria-disabled');
     }
 
-    function showReading() {
+    function showReading(source) {
       list.innerHTML =
         '<div class="file-item" aria-busy="true">' +
           '<span class="icon icon-sm">hourglass_top</span>' +
-          '<span class="grow text-truncate">Reading the playlist from Spotify…</span>' +
+          '<span class="grow text-truncate">Reading the playlist from ' + source + '…' +
+            (source === 'YouTube' ? ' A big one takes up to a minute.' : '') + '</span>' +
         '</div>';
     }
 
@@ -387,7 +392,11 @@
           '<span class="grow text-truncate" title="' + escapeHtml(linked.name) + '">' + escapeHtml(linked.name) + '</span>' +
           '<span class="text-caption ' + (tooBig ? 'text-warning' : 'text-muted') + '"' +
             (tooBig ? ' title="' + (page === 'server' ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
-            linked.total + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
+            count(linked.total) + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
+          (linked.unavailable
+            ? '<span class="text-caption text-muted" title="Deleted or private videos. They stay in the CSV, but there is nothing to search for.">' +
+              linked.unavailable + ' unavailable</span>'
+            : '') +
           '<button class="button button-outlined button-sm" type="button" data-action="save-csv"' +
             ' aria-label="Download ' + escapeHtml(linked.file.name) + '" title="Save the playlist as a CSV, to scan later">' +
             '<span class="icon icon-sm">download</span> CSV</button>' +
@@ -399,10 +408,11 @@
       linked = null;
       field.value = url;
       if (input) input.value = '';
-      showReading();
+      var source = linkSource(url);
+      showReading(source);
       setBusy(scanButton, 'Reading playlist');
       if (importButton) importButton.setAttribute('aria-disabled', 'true');
-      announce('Reading the playlist from Spotify');
+      announce('Reading the playlist from ' + source);
       try {
         var res = await api('POST', '/api/playlist-link', { url: url });
         if (run !== linkRun) return;
@@ -411,6 +421,7 @@
           file: new File([res.csv], res.filename, { type: 'text/csv' }),
           name: res.name,
           total: res.total,
+          unavailable: res.unavailable || 0,
           maxScan: res.maxScan,
           maxImport: res.maxImport
         };
@@ -439,8 +450,8 @@
         if (!linked || linked.url !== text) read(text);
         return true;
       }
-      if (SPOTIFY_OTHER.test(text)) {
-        toast('Only playlist links work for now, not songs, albums or artists.', 'warning');
+      if (SPOTIFY_OTHER.test(text) || YOUTUBE_OTHER.test(text)) {
+        toast('Only playlist links work, not single songs, videos, albums or channels.', 'warning');
         return true;
       }
       return false;
@@ -464,7 +475,7 @@
       if (event.key !== 'Enter') return;
       event.preventDefault();
       if (!field.value.trim()) return;
-      if (!tryLink(field.value)) toast('That isn\'t a Spotify playlist link.', 'warning');
+      if (!tryLink(field.value, false)) toast('That isn\'t a Spotify or YouTube playlist link.', 'warning');
     });
     field.addEventListener('change', function () {
       if (isPlaylistLink(field.value)) tryLink(field.value);
