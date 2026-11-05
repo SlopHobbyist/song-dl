@@ -37,10 +37,8 @@
         <div class="auth-row">
           <label class="choice"><input type="checkbox" id="login-remember" name="remember" checked><span class="choice-box"></span><span class="choice-label">Stay signed in</span></label>
         </div>
-        <!-- TODO: Cloudflare Turnstile. Add this to <head> and replace the placeholder with the real widget:
-             <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-             <div class="cf-turnstile" data-sitekey="YOUR_SITE_KEY" data-theme="dark"></div>
-             The widget injects a hidden "cf-turnstile-response" field; verify it server-side. -->
+        <!-- main.js swaps this for the Cloudflare Turnstile widget when webserver.turnstile is set in
+             config.yaml, and hides it otherwise -->
         <div class="turnstile-placeholder" id="login-turnstile" role="img" aria-label="Cloudflare Turnstile placeholder">
           Cloudflare Turnstile
         </div>
