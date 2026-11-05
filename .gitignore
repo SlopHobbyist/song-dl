@@ -120,3 +120,4 @@ htmlcov/
 /slskd/*
 !/slskd/.gitkeep
 /examples/
+/models/

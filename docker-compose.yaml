@@ -11,6 +11,7 @@
 #   slskd/      slskd's settings and data
 #   data/       the admin queue, remembered across restarts
 #   certs/      cert.pem and key.pem when webserver.https is on
+#   models/     the small AI model that answers uploaders' captchas (about 1 GB, downloaded on first start)
 
 services:
   # Writes slskd/slskd.yml from config.yaml, then exits.
@@ -53,4 +54,16 @@ services:
       - ./certs:/certs
     ports:
       - "8080:8080"
+    restart: unless-stopped
+
+  # Reads uploaders' messages to spot captchas (see captcha in config.yaml). CPU only. Only the app can
+  # reach it. It sleeps after 10 idle minutes, leaving the model on disk instead of in memory.
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11749
+    command: ["-hf", "Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M", "--host", "0.0.0.0", "--port", "8080",
+              "--ctx-size", "2048", "--parallel", "1", "--no-webui", "--sleep-idle-seconds", "600"]
+    environment:
+      - LLAMA_CACHE=/models
+    volumes:
+      - ./models:/models
     restart: unless-stopped

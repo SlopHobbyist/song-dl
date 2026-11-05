@@ -11,6 +11,7 @@ import sys
 from aiohttp import web
 
 from . import config, setup
+from .captcha import Captcha
 from .engine import Engine
 from .jobs import Manager
 from .server_queue import ServerQueue
@@ -79,7 +80,8 @@ def main(argv):
     if command == 'serve':
         cfg.downloads_dir.mkdir(parents=True, exist_ok=True)
         engine = Engine(cfg, Slskd(cfg.slskd_url, setup.api_key(cfg)))
-        app = build_app(cfg, Manager(cfg, engine), ServerQueue(cfg, engine))
+        captcha = Captcha(cfg, engine) if cfg.captcha else None
+        app = build_app(cfg, Manager(cfg, engine), ServerQueue(cfg, engine), captcha)
         ssl_context = tls_context(cfg) if cfg.https else None
         scheme = 'https' if ssl_context else 'http'
         log.info('Song-DL listening on %s://%s:%d', scheme, cfg.ip, cfg.web_port)

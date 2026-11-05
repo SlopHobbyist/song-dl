@@ -33,3 +33,8 @@ webserver:
   turnstile:
     site_key:
     secret_key:
+captcha:
+  # Some uploaders hold their files until you message back a keyword, e.g. 'type "download" in this chat
+  # to prove you are human'. A small AI model (the llm container) reads messages from uploaders we asked
+  # for a file and sends back only that keyword. Any other message is never answered.
+  enabled: True

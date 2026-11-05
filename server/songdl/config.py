@@ -42,6 +42,9 @@ class Config:
     admins: dict = field(default_factory=dict)   # username -> password; empty turns the admin pages off
     turnstile_site_key: str = ''
     turnstile_secret: str = ''
+    # captcha
+    captcha: bool = True   # answer uploaders' "type download to prove you're human" messages
+    llm_url: str = 'http://localhost:8081'
     # runtime locations
     data_dir: Path = Path('data')   # the server queue is remembered here across restarts
     slskd_dir: Path = Path('slskd')
@@ -91,6 +94,7 @@ def load(path=None):
     dl = raw.get('downloads') or {}
     web = raw.get('webserver') or {}
     ts = web.get('turnstile') or {}
+    captcha = raw.get('captcha') or {}
     repo = Path(__file__).resolve().parents[2]
 
     username = str(slsk.get('username') or '').strip()
@@ -125,6 +129,8 @@ def load(path=None):
             admins=_admins(web.get('admins')),
             turnstile_site_key=site_key,
             turnstile_secret=secret,
+            captcha=bool(captcha.get('enabled', True)),
+            llm_url=os.environ.get('SONGDL_LLM_URL', 'http://localhost:8081').rstrip('/'),
             data_dir=_path(os.environ.get('SONGDL_DATA', 'data'), base),
             slskd_dir=_path(os.environ.get('SONGDL_SLSKD_DIR', 'slskd'), base),
             slskd_url=os.environ.get('SONGDL_SLSKD_URL', 'http://localhost:5030').rstrip('/'),

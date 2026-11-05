@@ -105,7 +105,7 @@ def content_security_policy(cfg):
             f"frame-src{frames}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
-def build_app(cfg, manager: jobs.Manager, queue: ServerQueue):
+def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
@@ -398,11 +398,18 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue):
             asyncio.create_task(housekeeping(cfg, manager, queue, limiter, auth)),
             asyncio.create_task(queue.run()),
         ]
+        if captcha:
+            await captcha.start()
+            tasks.append(asyncio.create_task(captcha.run()))
+        else:
+            log.info('captcha.enabled is off, so uploaders\' captcha messages won\'t be answered')
         yield
         queue.shutdown()
         for task in tasks:
             task.cancel()
         manager.shutdown()
+        if captcha:
+            await captcha.close()
         await manager.engine.slskd.close()
 
     app.cleanup_ctx.append(background)

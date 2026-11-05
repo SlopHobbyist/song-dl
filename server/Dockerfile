@@ -16,6 +16,7 @@ COPY webui ./webui
 ENV SONGDL_CONFIG=/config/config.yaml \
     SONGDL_SLSKD_DIR=/slskd \
     SONGDL_SLSKD_URL=http://slskd:5030 \
+    SONGDL_LLM_URL=http://llm:8080 \
     SONGDL_DOWNLOADS=/downloads \
     SONGDL_CERTS=/certs \
     SONGDL_DATA=/data \

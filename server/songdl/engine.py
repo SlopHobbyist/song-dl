@@ -32,6 +32,7 @@ STALL_SECONDS = 45            # seconds without progress before giving up on a t
 MAX_ATTEMPTS = 5              # copies to try per download
 RESCAN_GAP = 120              # minimum seconds between share rescans
 MIN_FREE_BYTES = 2 * 10**9    # refuse new downloads when the disk has less room than this
+ASKED_WINDOW = 30 * 60        # seconds after asking an uploader for a file that we'll answer their captcha
 LENGTH_TOLERANCE = 8          # seconds a copy may differ from the length in the CSV and still be preferred
 
 NOT_CONNECTED = 'Song-DL is not connected to the Soulseek network right now. Please try again in a minute.'
@@ -61,6 +62,7 @@ class Fetch:
         self.finished = None
         self.path = None
         self.error = None
+        self.created = time.monotonic()
         self.observers = 0
         self.task = None
 
@@ -81,6 +83,8 @@ class Engine:
         self.tasks = set()
         self.rescan_pending = False
         self.last_rescan = 0
+        self.asked = {}       # username -> monotonic time we last asked them for a file
+        self.captcha = None   # captcha.Captcha, when captchas are answered
 
     def spawn(self, coro):
         task = asyncio.create_task(coro)
@@ -179,18 +183,41 @@ class Engine:
         cands = cands[:MAX_ATTEMPTS]
         last = len(cands) - 1
         for i, cand in enumerate(cands):
-            fetch = self._fetch(cand)
-            fetch.observers += 1
-            try:
-                if await self._watch(fetch, i == last, i, update):
-                    return fetch
-            finally:
-                fetch.observers -= 1
-                if fetch.active and not fetch.observers:
-                    self.spawn(self._cancel(fetch))
+            retried = False
+            while True:
+                fetch = self._fetch(cand)
+                fetch.observers += 1
+                cancel = None
+                try:
+                    if await self._watch(fetch, i == last, i, update):
+                        return fetch
+                finally:
+                    fetch.observers -= 1
+                    if fetch.active and not fetch.observers:
+                        cancel = self.spawn(self._cancel(fetch))
+                # Uploaders with a captcha refuse or hold the file until it's answered; ask once more after that
+                if retried or fetch.observers or not await self._captcha_answered(fetch):
+                    break
+                retried = True
+                log.info('asking %s again after answering their captcha', cand.username)
+                if update:
+                    update(None, None, f'Answered {cand.username}\'s captcha, asking again')
+                if cancel:
+                    await cancel
+                if self.fetches.get(fetch.key) is fetch:
+                    del self.fetches[fetch.key]
         raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
                         if len(cands) > 1 else
                         'Couldn\'t get the file from the uploader. Please try again later, or search again.')
+
+    async def _captcha_answered(self, fetch: Fetch):
+        if not self.captcha:
+            return False
+        return await self.captcha.answered_since(fetch.cand.username, fetch.created)
+
+    def asked_recently(self, user):
+        """Whether we asked `user` for a file lately; only they may get a captcha answered."""
+        return time.monotonic() - self.asked.get(user, float('-inf')) < ASKED_WINDOW
 
     async def _watch(self, fetch: Fetch, is_last, attempt, update):
         """Follows a fetch. Returns True once the file is ready, False when this copy is no good."""
@@ -260,6 +287,7 @@ class Engine:
 
     async def _transfer(self, fetch: Fetch):
         cand = fetch.cand
+        self.asked[cand.username] = time.monotonic()
         res = await self.slskd.enqueue(cand.username, cand.filename, cand.size, fetch.id)
         failures = (res or {}).get('failures') or []
         transfers = ((res or {}).get('batch') or {}).get('transfers') or []
@@ -360,6 +388,8 @@ class Engine:
         for key in [k for k, f in self.fetches.items() if not f.active and not f.observers
                     and (f.phase == 'failed' or not (f.path and f.path.exists()))]:
             del self.fetches[key]
+        for user in [u for u in self.asked if not self.asked_recently(u)]:
+            del self.asked[user]
 
 
 def _transfer_error(user, message):

@@ -4,12 +4,15 @@
 
 It serves the parts of slskd's API that Song-DL uses and a small made-up music
 library. Searches take about a second; downloads take a few seconds and write
-a file with the right header and size into the downloads folder.
+a file with the right header and size into the downloads folder. With
+--captcha alice=download, alice refuses downloads and messages us a captcha
+until we message back "download".
 """
 
 import argparse
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aiohttp import web
@@ -63,6 +66,29 @@ class Fake:
         self.searches = {}
         self.transfers = {}
         self.logged_in = True
+        self.captchas = {}       # username -> keyword they want messaged back before they upload
+        self.whitelisted = set()
+        self.messages = {}       # username -> private messages, both ways, as slskd lists them
+        self.message_id = 0
+
+    def say(self, user, text, replayed=False, timestamp=None):
+        """A private message from `user` to us."""
+        self._add(user, text, 'In', replayed, timestamp)
+
+    def sent(self, user):
+        return [m['message'] for m in self.messages.get(user, []) if m['direction'] == 'Out']
+
+    def unread(self):
+        return [m for ms in self.messages.values() for m in ms if not m['isAcknowledged']]
+
+    def _add(self, user, text, direction, replayed=False, timestamp=None):
+        self.message_id += 1
+        # slskd's timestamps are UTC, without an offset
+        when = timestamp or datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        self.messages.setdefault(user, []).append({
+            'timestamp': when, 'id': self.message_id, 'username': user, 'direction': direction,
+            'message': text, 'isAcknowledged': direction == 'Out', 'wasReplayed': replayed,
+        })
 
     def responses(self, text):
         words = text.lower().replace('-', ' ').split()
@@ -87,6 +113,8 @@ class Fake:
         age = time.monotonic() - t['created']
         if t.get('cancelled'):
             return 'Completed, Cancelled', 0
+        if t.get('captcha'):
+            return ('Completed, Rejected', 0) if age > 0.3 else ('Requested', 0)
         wait, run = 0.8, 4.0 / self.speed
         if age < wait:
             return 'Queued, Remotely', 0
@@ -136,6 +164,11 @@ def make_app(fake: Fake):
                 'created': time.monotonic(), 'size': f['size'], 'filename': f['filename'],
                 'username': body['username'], 'destination': body['options']['destination'],
             }
+            keyword = fake.captchas.get(body['username'])
+            if keyword and body['username'] not in fake.whitelisted:
+                fake.transfers[tid]['captcha'] = True
+                fake.say(body['username'], f'ProveIt: To prove you are a human downloading these files, please '
+                                           f'type "{keyword}" in this chat to be added to my whitelist.')
             transfers.append({'id': tid})
         return web.json_response({'batch': {'transfers': transfers}, 'failures': []})
 
@@ -157,6 +190,33 @@ def make_app(fake: Fake):
             t['cancelled'] = True
         return web.json_response({})
 
+    async def conversations(request):
+        unread = request.query.get('unAcknowledgedOnly') == 'true'
+        return web.json_response([
+            {'username': user, 'isActive': True, 'hasUnAcknowledgedMessages': any(not m['isAcknowledged'] for m in ms)}
+            for user, ms in fake.messages.items() if not unread or any(not m['isAcknowledged'] for m in ms)])
+
+    async def messages(request):
+        unread = request.query.get('unAcknowledgedOnly') == 'true'
+        ms = fake.messages.get(request.match_info['user'])
+        if ms is None:
+            return web.Response(status=404, text='not found')
+        return web.json_response([m for m in ms if not unread or not m['isAcknowledged']])
+
+    async def acknowledge(request):
+        for m in fake.messages.get(request.match_info['user'], []):
+            if m['id'] == int(request.match_info['id']):
+                m['isAcknowledged'] = True
+                return web.Response(status=200)
+        return web.Response(status=404, text='not found')
+
+    async def send(request):
+        user, text = request.match_info['user'], await request.json()
+        fake._add(user, text, 'Out')
+        if fake.captchas.get(user) == text:
+            fake.whitelisted.add(user)
+        return web.Response(status=201)
+
     app = web.Application()
     base = '/api/v0'
     app.add_routes([
@@ -171,6 +231,10 @@ def make_app(fake: Fake):
         web.get(f'{base}/transfers/downloads/{{user}}/{{tid}}/position', position),
         web.delete(f'{base}/transfers/downloads/{{user}}/{{tid}}', cancel),
         web.put(f'{base}/shares', ok),
+        web.get(f'{base}/conversations', conversations),
+        web.get(f'{base}/conversations/{{user}}/messages', messages),
+        web.put(f'{base}/conversations/{{user}}/{{id}}', acknowledge),
+        web.post(f'{base}/conversations/{{user}}', send),
     ])
     app[web.AppKey('fake', Fake)] = fake
     return app
@@ -181,5 +245,9 @@ if __name__ == '__main__':
     ap.add_argument('--downloads', default='downloads')
     ap.add_argument('--port', type=int, default=5030)
     ap.add_argument('--speed', type=float, default=1.0, help='download speed; 0.25 makes downloads four times as slow')
+    ap.add_argument('--captcha', action='append', default=[], metavar='USER=KEYWORD',
+                    help='USER (alice or bob) refuses downloads until we message back KEYWORD')
     args = ap.parse_args()
-    web.run_app(make_app(Fake(Path(args.downloads).resolve(), args.speed)), port=args.port, print=None)
+    fake = Fake(Path(args.downloads).resolve(), args.speed)
+    fake.captchas = dict(c.split('=', 1) for c in args.captcha)
+    web.run_app(make_app(fake), port=args.port, print=None)

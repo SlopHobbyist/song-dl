@@ -5,6 +5,7 @@ downloads
 data
 slskd
 certs
+models
 config.yaml
 **/__pycache__
 webui/vendored/*/.git

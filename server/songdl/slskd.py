@@ -89,3 +89,19 @@ class Slskd:
 
     async def rescan_shares(self):
         return await self.request('PUT', '/shares', {})
+
+    # Private messages
+
+    async def conversations(self, unacknowledged=False):
+        return await self.request('GET', '/conversations',
+                                  params={'unAcknowledgedOnly': str(unacknowledged).lower()})
+
+    async def messages(self, username, unacknowledged=False):
+        return await self.request('GET', f'/conversations/{quote(username, safe="")}/messages',
+                                  params={'unAcknowledgedOnly': str(unacknowledged).lower()})
+
+    async def acknowledge(self, username, message_id):
+        return await self.request('PUT', f'/conversations/{quote(username, safe="")}/{message_id}')
+
+    async def send_message(self, username, text):
+        return await self.request('POST', f'/conversations/{quote(username, safe="")}', text)
