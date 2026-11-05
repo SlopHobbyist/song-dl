@@ -24,10 +24,10 @@
   <nav class="topnav hide-sm" aria-label="Main">
     <a class="topnav-link" href="index.html">Browser</a>
     <a class="topnav-link" href="server.html" aria-current="page">Server</a>
-    <a class="topnav-link" href="all.html">All <span class="badge-count">4</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="all.html">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="topbar-actions">
-    <a class="button button-icon" href="index.html" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
+    <a class="button button-icon" href="index.html" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
   </div>
 </header>
 
@@ -41,10 +41,10 @@
   <nav class="drawer-body" aria-label="Main">
     <a class="nav-item" href="index.html"><span class="icon" aria-hidden="true">download</span> Browser</a>
     <a class="nav-item" href="server.html" aria-current="page"><span class="icon" aria-hidden="true">dns</span> Server</a>
-    <a class="nav-item" href="all.html"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">4</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="all.html"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="drawer-footer">
-    <a class="nav-item" href="index.html"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
+    <a class="nav-item" href="index.html" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
   </div>
 </aside>
 
@@ -59,7 +59,7 @@
         <div class="input-group">
           <span class="icon icon-sm" aria-hidden="true">folder</span>
           <span class="input-affix text-mono">downloads/</span>
-          <input class="input text-mono" id="subfolder" type="text" value="road-trip-2026" placeholder="folder-name">
+          <input class="input text-mono" id="subfolder" type="text" value="" placeholder="folder-name" autocomplete="off">
         </div>
       </div>
 
@@ -113,6 +113,17 @@
 
       <!-- ======================================================= Results -->
       <div class="mt-6">
+        <div id="search-loading" hidden>
+          <div class="progress-linear is-indeterminate" role="progressbar" aria-label="Searching Soulseek"><div class="progress-bar"></div></div>
+          <p class="text-caption text-muted text-center mt-2" id="search-status"></p>
+        </div>
+
+        <div class="empty-state" id="search-empty" role="status" hidden>
+          <span class="icon" aria-hidden="true">search_off</span>
+          <p class="text-heading-3">No match found</p>
+          <p class="text-body-2 text-muted" data-bind="message"></p>
+        </div>
+
         <div class="result" id="search-result" role="region" aria-label="Search result" hidden>
           <article class="card">
             <div class="card-body result-body">
@@ -125,10 +136,10 @@
                 <h2 class="text-heading-2 mt-2" data-bind="title">Paper Lanterns</h2>
                 <p class="text-body-2 text-muted" data-bind="artist">The Quiet Harbor</p>
                 <dl class="detail-list mt-4">
-                  <dt>Album</dt><dd>Low Tide Radio (2019)</dd>
+                  <dt>Album</dt><dd data-bind="album">Low Tide Radio (2019)</dd>
                   <dt>Quality</dt><dd data-bind="quality">24-bit / 96 kHz</dd>
                   <dt>Size</dt><dd data-bind="size">48.6 MB</dd>
-                  <dt>Saves to</dt><dd class="text-mono text-truncate" data-bind="dest">downloads/road-trip-2026/</dd>
+                  <dt>Saves to</dt><dd class="text-mono text-truncate" data-bind="dest">downloads/</dd>
                 </dl>
               </div>
             </div>

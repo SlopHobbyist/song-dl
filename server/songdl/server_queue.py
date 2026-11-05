@@ -212,11 +212,12 @@ class ServerQueue:
     # Running
 
     def dest_dir(self, folder):
-        root = self.cfg.downloads_dir.resolve()
-        dest = (root / folder).resolve() if folder else root
-        if dest != root and root not in dest.parents:
+        """Where a normalize_folder() name is, inside the downloads folder. The
+        name has no "..", drive letters or other way out, so it is only joined,
+        not resolved (resolving races with the folder being created)."""
+        if folder != normalize_folder(folder):
             raise UserError('That folder is outside the downloads folder.')
-        return dest
+        return self.cfg.downloads_dir.joinpath(*folder.split('/')) if folder else self.cfg.downloads_dir
 
     def _changed(self):
         self.dirty = True

@@ -291,3 +291,13 @@ async def test_queue_survives_a_restart(admin, fake, tmp_path):
 async def test_download_of_an_expired_result_is_refused(site):
     res = await site.post('/api/download', json={'result': 'nope'})
     assert res.status == 404
+
+
+async def test_all_formats_into_a_new_nested_folder(admin, tmp_path):
+    # Several songs start at once and all create the same new folders
+    job = await search(admin, 'daft punk digital love', ['wav', 'aiff', 'flac', 'mp3'])
+    ids = [r['id'] for r in job['results']]
+    await admin.post('/api/queue', json={'folder': 'archive/vinyl-rips', 'results': ids})
+    view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] in ('done', 'failed') for i in v['items']))
+    assert [i['status'] for i in view['items']] == ['done'] * 4, [i['note'] for i in view['items']]
+    assert len(list((tmp_path / 'downloads' / 'archive' / 'vinyl-rips').iterdir())) == 4

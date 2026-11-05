@@ -24,10 +24,10 @@
   <nav class="topnav hide-sm" aria-label="Main">
     <a class="topnav-link" href="index.html">Browser</a>
     <a class="topnav-link" href="server.html">Server</a>
-    <a class="topnav-link" href="all.html" aria-current="page">All <span class="badge-count">4</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="all.html" aria-current="page">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="topbar-actions">
-    <a class="button button-icon" href="index.html" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
+    <a class="button button-icon" href="index.html" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
   </div>
 </header>
 
@@ -41,10 +41,10 @@
   <nav class="drawer-body" aria-label="Main">
     <a class="nav-item" href="index.html"><span class="icon" aria-hidden="true">download</span> Browser</a>
     <a class="nav-item" href="server.html"><span class="icon" aria-hidden="true">dns</span> Server</a>
-    <a class="nav-item" href="all.html" aria-current="page"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">4</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="all.html" aria-current="page"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="drawer-footer">
-    <a class="nav-item" href="index.html"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
+    <a class="nav-item" href="index.html" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
   </div>
 </aside>
 
@@ -63,21 +63,21 @@
       <div class="stat-grid mt-6" role="group" aria-label="Download summary">
         <div class="stat">
           <span class="stat-label">Downloading</span>
-          <span class="stat-value" data-count="downloading">2</span>
-          <span class="stat-delta text-muted"><span class="icon icon-sm" aria-hidden="true">speed</span> 6.8 MB/s</span>
+          <span class="stat-value" data-count="downloading">0</span>
+          <span class="stat-delta text-muted"><span class="icon icon-sm" aria-hidden="true">speed</span> <span data-bind="speed">0 MB/s</span></span>
         </div>
         <div class="stat">
           <span class="stat-label">Queued</span>
-          <span class="stat-value" data-count="queued">2</span>
+          <span class="stat-value" data-count="queued">0</span>
         </div>
         <div class="stat">
           <span class="stat-label">Paused or failed</span>
-          <span class="stat-value" data-count="stopped">2</span>
+          <span class="stat-value" data-count="stopped">0</span>
         </div>
         <div class="stat">
           <span class="stat-label">Done today</span>
-          <span class="stat-value" data-count="done">3</span>
-          <span class="stat-delta text-muted"><span class="icon icon-sm" aria-hidden="true">sd_storage</span> 142 MB</span>
+          <span class="stat-value" data-count="done">0</span>
+          <span class="stat-delta text-muted"><span class="icon icon-sm" aria-hidden="true">sd_storage</span> <span data-bind="done-size">0 MB</span></span>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
-/* Song-DL mockup.
-   Nothing here talks to a server. Every button swaps in canned data so the
-   flows can be clicked through; the kit (design_language.js) supplies the
-   drawer, dialogs, toasts, segmented control and file drop. */
+/* Song-DL web UI.
+   Talks to the server's JSON API (server/songdl/web.py). The kit
+   (design_language.js) supplies the drawer, dialogs, toasts, segmented control
+   and file drop. */
 (function () {
   'use strict';
 
@@ -71,6 +71,15 @@
         zone.click();
       }
     });
+    /* The kit lists a dropped file but leaves the input empty; fill it in so
+       the file can be read. */
+    zone.addEventListener('drop', function (event) {
+      var files = event.dataTransfer && event.dataTransfer.files;
+      var input = $('input[type="file"]', zone);
+      if (!files || !files.length || !input) return;
+      try { input.files = files; } catch (e) { return; }
+      announce(files[0].name + ' selected');
+    });
   });
   $$('.file-drop input[type="file"]').forEach(function (input) {
     input.setAttribute('tabindex', '-1');
@@ -81,11 +90,15 @@
     });
   });
 
+  /* ------------------------------------------------------------ Helpers */
+
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
   /* Every ticked format checkbox in the group, in page order. */
   function checkedValues(name) {
@@ -98,68 +111,160 @@
     if (el && el.textContent !== text) el.textContent = text;
   }
 
-  /* "44.4 MB" + "48.6 MB" -> "93.0 MB" */
-  function sumSizes(sizes) {
-    var total = sizes.reduce(function (sum, s) { return sum + (parseFloat(s) || 0); }, 0);
-    return total.toFixed(1) + ' MB';
+  function formatSize(bytes) {
+    if (!bytes) return '—';
+    var mb = bytes / 1e6;
+    return mb >= 1000 ? (mb / 1000).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
+  }
+
+  function sumSizes(items) {
+    return items.reduce(function (sum, item) { return sum + (item.size || 0); }, 0);
+  }
+
+  function formatDuration(seconds) {
+    if (!seconds) return '—';
+    var s = Math.round(seconds);
+    return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+  }
+
+  function formatSpeed(bytesPerSecond) {
+    return ((bytesPerSecond || 0) / 1e6).toFixed(1) + ' MB/s';
   }
 
   /* The folder under downloads/, with a trailing slash. */
   function subfolder() {
     var field = $('#subfolder');
-    var value = field ? field.value.trim().replace(/^\/+|\/+$/g, '') : '';
+    var value = field ? field.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '';
     return value ? value + '/' : '';
   }
 
-  /* -------------------------------------------------------- Canned data */
+  /* A button that is busy keeps keyboard focus (aria-disabled, not disabled)
+     and shows what it is doing in place of its own label. */
+  function isBusy(button) { return button.getAttribute('aria-disabled') === 'true'; }
 
-  var FORMAT_INFO = {
-    WAV:  { quality: '16-bit / 44.1 kHz', size: '44.4 MB', ext: 'wav' },
-    AIFF: { quality: '16-bit / 44.1 kHz', size: '44.4 MB', ext: 'aiff' },
-    FLAC: { quality: '24-bit / 96 kHz', size: '48.6 MB', ext: 'flac' },
-    MP3:  { quality: '320 kbps', size: '9.8 MB', ext: 'mp3' }
-  };
+  function setBusy(button, label) {
+    if (!button.hasAttribute('data-idle')) button.setAttribute('data-idle', button.innerHTML);
+    button.setAttribute('aria-disabled', 'true');
+    button.innerHTML = '<span class="icon" aria-hidden="true">hourglass_top</span> ' + escapeHtml(label);
+  }
 
-  var PLAYLIST = [
-    { title: 'Paper Lanterns',    artist: 'The Quiet Harbor',  size: '48.6 MB', found: true },
-    { title: 'Glasswing',         artist: 'Northbound Static', size: '50.1 MB', found: true },
-    { title: 'Copper Season',     artist: 'Marlow Fields',     size: '41.2 MB', found: true },
-    { title: 'Small Hours',       artist: 'Juniper Avenue',    size: '37.9 MB', found: true },
-    { title: 'Neon Orchard',      artist: 'Vela Coast',        size: null,      found: false },
-    { title: 'Rooftop Choir',     artist: 'Bellweather',       size: '39.2 MB', found: true },
-    { title: 'Morning Ferry',     artist: 'Bellweather',       size: '54.1 MB', found: true },
-    { title: 'Salt & Cedar',      artist: 'Ida Fontaine',      size: null,      found: false },
-    { title: 'Weather Vane',      artist: 'Ottoline',          size: '46.0 MB', found: true },
-    { title: 'Signal Fires',      artist: 'The Dunmore Set',   size: '43.3 MB', found: true },
-    { title: 'Last Train West',   artist: 'Harrow & Pine',     size: null,      found: false },
-    { title: 'Lighthouse Keeper', artist: 'Ottoline',          size: '52.7 MB', found: true }
-  ];
+  function setIdle(button) {
+    if (button.hasAttribute('data-idle')) {
+      button.innerHTML = button.getAttribute('data-idle');
+      button.removeAttribute('data-idle');
+    }
+    button.removeAttribute('aria-disabled');
+  }
 
-  var QUEUE = [
-    { title: 'Glasswing',         artist: 'Northbound Static', format: 'FLAC', folder: 'road-trip-2026/',     by: 'admin', status: 'downloading', progress: 62, size: '50.1 MB' },
-    { title: 'Copper Season',     artist: 'Marlow Fields',     format: 'FLAC', folder: 'road-trip-2026/',     by: 'admin', status: 'downloading', progress: 18, size: '41.2 MB' },
-    { title: 'Small Hours',       artist: 'Juniper Avenue',    format: 'FLAC', folder: 'road-trip-2026/',     by: 'admin', status: 'queued',      size: '37.9 MB' },
-    { title: 'Weather Vane',      artist: 'Ottoline',          format: 'WAV',  folder: 'archive/vinyl-rips/', by: 'sam',   status: 'queued',      size: '46.0 MB' },
-    { title: 'Lighthouse Keeper', artist: 'Ottoline',          format: 'WAV',  folder: 'archive/vinyl-rips/', by: 'sam',   status: 'paused',      progress: 41, size: '52.7 MB' },
-    { title: 'Signal Fires',      artist: 'The Dunmore Set',   format: 'FLAC', folder: 'road-trip-2026/',     by: 'admin', status: 'failed',      note: 'Source timed out' },
-    { title: 'Paper Lanterns',    artist: 'The Quiet Harbor',  format: 'FLAC', folder: 'road-trip-2026/',     by: 'admin', status: 'done',        size: '48.6 MB' },
-    { title: 'Rooftop Choir',     artist: 'Bellweather',       format: 'FLAC', folder: 'sunday-mix/',         by: 'sam',   status: 'done',        size: '39.2 MB' },
-    { title: 'Morning Ferry',     artist: 'Bellweather',       format: 'FLAC', folder: 'sunday-mix/',         by: 'sam',   status: 'done',        size: '54.1 MB' }
-  ];
+  /* ---------------------------------------------------------------- API */
 
-  /* "Title - Artist" or "Title by Artist"; anything else is just a title. */
-  function parseQuery(query) {
-    var parts = query.split(/\s+(?:-|–|by)\s+/i);
-    if (parts.length >= 2) return { title: parts[0], artist: parts.slice(1).join(' ') };
-    return { title: query || 'Paper Lanterns', artist: query ? 'Unknown artist' : 'The Quiet Harbor' };
+  async function api(method, path, body, raw) {
+    var options = { method: method, credentials: 'same-origin', headers: {} };
+    if (raw !== undefined) {
+      options.body = raw;
+    } else if (body !== undefined) {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    var res;
+    try {
+      res = await fetch(path, options);
+    } catch (e) {
+      throw new Error('Can\'t reach the server. Check your connection and try again.');
+    }
+    var data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      /* The session ended (or never began): the admin pages need a sign-in. */
+      if (res.status === 401 && (page === 'server' || page === 'all')) {
+        window.location.href = 'login.html';
+      }
+      var error = new Error(data.error || 'Something went wrong. Please try again.');
+      error.status = res.status;
+      throw error;
+    }
+    return data;
+  }
+
+  /* Runs `handler` now and then every `ms` while the tab is visible. Tells the
+     person once if the server stops answering. */
+  function poll(handler, ms) {
+    var running = false;
+    var failures = 0;
+    var warned = false;
+    async function tick() {
+      if (running || document.hidden) return;
+      running = true;
+      try {
+        await handler();
+        failures = 0;
+        warned = false;
+      } catch (e) {
+        failures++;
+        if (failures >= 3 && !warned) {
+          warned = true;
+          toast('Lost contact with the server. Retrying…', 'warning');
+        }
+      } finally {
+        running = false;
+      }
+    }
+    tick();
+    setInterval(tick, ms);
+    document.addEventListener('visibilitychange', tick);
+  }
+
+  /* ------------------------------------------------- Navigation and session */
+
+  function initChrome() {
+    $$('[data-action="logout"]').forEach(function (link) {
+      link.addEventListener('click', async function (event) {
+        event.preventDefault();
+        try { await api('POST', '/api/logout'); } catch (e) {}
+        window.location.href = 'index.html';
+      });
+    });
+
+    /* Signed in? The admin button on the home page goes to the Server page. */
+    var admin = $('#admin-link');
+    if (admin) {
+      api('GET', '/api/session').then(function (session) {
+        if (!session.user) return;
+        admin.setAttribute('href', 'server.html');
+        admin.setAttribute('aria-label', 'Server');
+        admin.setAttribute('title', 'Server');
+        $('.icon', admin).textContent = 'dns';
+      }, function () {});
+    }
+  }
+
+  function setActiveCount(count) {
+    $$('.badge-count, .nav-item-trailing').forEach(function (el) { setText(el, count); });
   }
 
   /* ------------------------------------------- Search / playlist switch */
 
+  /* A search or scan that is polling stops as soon as its run number changes. */
+  var runs = { search: 0, scan: 0, scanJob: null };
+
+  function cancelScanJob() {
+    runs.scan++;
+    if (runs.scanJob) {
+      fetch('/api/scan/' + runs.scanJob, { method: 'DELETE', credentials: 'same-origin' }).catch(function () {});
+      runs.scanJob = null;
+    }
+  }
+
   function hideResults() {
-    ['#search-result', '#scan-loading', '#scan-results'].forEach(function (sel) {
+    runs.search++;
+    cancelScanJob();
+    ['#search-result', '#search-loading', '#search-empty', '#scan-loading', '#scan-results'].forEach(function (sel) {
       var el = $(sel);
       if (el) el.hidden = true;
+    });
+    ['#scan-button', '#search-form button[type="submit"]'].forEach(function (sel) {
+      var button = $(sel);
+      if (button) setIdle(button);
     });
   }
 
@@ -182,57 +287,252 @@
     });
   }
 
+  /* ------------------------------------------------------ Getting files */
+
+  /* Asks the browser to save a file the server has ready. */
+  function saveFile(url) {
+    var link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', '');
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  /* Has the server fetch each result from Soulseek, `concurrency` at a time,
+     and waits for all of them. Returns the final state of every job, in order.
+     onUpdate(finished, total, progress 0..1) is called as it goes. */
+  async function fetchFiles(resultIds, concurrency, onUpdate) {
+    var jobs = new Array(resultIds.length);
+    var progress = resultIds.map(function () { return 0; });
+    var next = 0;
+    var finished = 0;
+
+    function report() {
+      if (!onUpdate) return;
+      var total = progress.reduce(function (sum, p) { return sum + p; }, 0);
+      onUpdate(finished, resultIds.length, total / resultIds.length);
+    }
+
+    async function worker() {
+      while (next < resultIds.length) {
+        var i = next++;
+        try {
+          var started = await api('POST', '/api/download', { result: resultIds[i] });
+          var view;
+          for (;;) {
+            var res = await api('GET', '/api/downloads?id=' + encodeURIComponent(started.id));
+            view = res.jobs[started.id];
+            progress[i] = view.progress || 0;
+            report();
+            if (view.state !== 'running') break;
+            await sleep(1000);
+          }
+          view.id = started.id;
+          jobs[i] = view;
+        } catch (e) {
+          jobs[i] = { state: 'failed', error: e.message };
+        }
+        progress[i] = 1;
+        finished++;
+        report();
+      }
+    }
+
+    var workers = [];
+    for (var w = 0; w < Math.min(concurrency, resultIds.length); w++) workers.push(worker());
+    await Promise.all(workers);
+    return jobs;
+  }
+
+  /* Hands finished files to the browser: one by one, or as a single zip. */
+  async function deliver(jobs, label, zipName) {
+    var done = jobs.filter(function (job) { return job.state === 'done'; });
+    var failed = jobs.filter(function (job) { return job.state !== 'done'; });
+    if (failed.length) {
+      var reason = failed[0].error || 'The download failed.';
+      toast(failed.length === jobs.length ? reason : failed.length + ' of ' + jobs.length + ' failed. ' + reason, 'danger');
+    }
+    if (!done.length) return false;
+
+    if (zipName) {
+      var query = done.map(function (job) { return 'job=' + encodeURIComponent(job.id); }).join('&');
+      saveFile('/api/zip?' + query + '&name=' + encodeURIComponent(zipName));
+    } else {
+      for (var i = 0; i < done.length; i++) {
+        if (i) await sleep(500);
+        saveFile(done[i].file);
+      }
+    }
+    toast('Downloading ' + label, 'success');
+    announce('Downloading ' + label);
+    return true;
+  }
+
+  /* Queues results on the server (Server page). */
+  async function queueResults(ids, label) {
+    var folderField = $('#subfolder');
+    var res = await api('POST', '/api/queue', { folder: folderField ? folderField.value : '', results: ids });
+    if (res.queued) {
+      toast('Queued ' + label, 'success');
+    } else {
+      toast('Already in the queue', 'warning');
+    }
+    return res;
+  }
+
   /* ------------------------------------------------------ Single search */
 
   function initSearch() {
     var form = $('#search-form');
     var result = $('#search-result');
     if (!form || !result) return;
+    var loading = $('#search-loading');
+    var status = $('#search-status');
+    var empty = $('#search-empty');
+    var submit = $('button[type="submit"]', form);
+    var current = null;   // what the result card shows: { results: [...] }
 
-    form.addEventListener('submit', function (event) {
+    function bind(key, value) {
+      var el = $('[data-bind="' + key + '"]', result);
+      if (el) el.textContent = value;
+    }
+
+    function showResult(job) {
+      var found = job.results;
+      current = job;
+      bind('title', job.title || job.query);
+      bind('artist', job.artist || 'Unknown artist');
+      bind('album', job.album || '—');
+      bind('duration', formatDuration(found[0].duration));
+      bind('format', found.map(function (r) { return r.format; }).join(' + '));
+      bind('quality', found.length === 1 ? found[0].quality : found.map(function (r) { return r.format + ' ' + r.quality; }).join(' · '));
+      bind('size', formatSize(sumSizes(found)));
+      bind('filename', found.map(function (r) { return r.filename; }).join(', '));
+      bind('dest', 'downloads/' + subfolder());
+
+      /* Formats that weren't found, and copies that may be another version */
+      var tags = $('.row.row-tight', result);
+      $$('.result-extra', tags).forEach(function (tag) { tag.remove(); });
+      var notes = job.missing.map(function (f) { return 'No ' + f; });
+      found.forEach(function (r) {
+        if (r.warning && notes.indexOf(r.warning) < 0) notes.push(r.warning);
+      });
+      notes.forEach(function (text) {
+        var tag = document.createElement('span');
+        tag.className = 'tag tag-warning result-extra';
+        tag.textContent = text;
+        tags.appendChild(tag);
+      });
+      result.hidden = false;
+      var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
+        found.map(function (r) { return r.format; }).join(' and ') + '.' +
+        (job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
+      announce(message);
+    }
+
+    function showEmpty(job) {
+      var what = job.missing.join(', ');
+      setText($('[data-bind="message"]', empty),
+        'Nobody on Soulseek is sharing ' + what + ' files matching that. Soulseek blocks searches for some artists, so try just the song title.');
+      empty.hidden = false;
+      announce('No match found for ' + job.query);
+    }
+
+    form.addEventListener('submit', async function (event) {
       event.preventDefault();
-      var song = parseQuery($('#q').value.trim());
+      if (isBusy(submit)) return;
+      var query = $('#q').value.trim();
       var formats = checkedValues('format');
       if (!formats.length) {
         toast('Pick at least one format', 'warning');
         return;
       }
-      var infos = formats.map(function (f) { return FORMAT_INFO[f]; });
-      var bind = function (key, value) {
-        var el = $('[data-bind="' + key + '"]', result);
-        if (el) el.textContent = value;
-      };
-      bind('title', song.title);
-      bind('artist', song.artist);
-      bind('format', formats.join(' + '));
-      bind('quality', formats.length === 1 ? infos[0].quality : formats.map(function (f, i) { return f + ' ' + infos[i].quality; }).join(' · '));
-      bind('size', sumSizes(infos.map(function (i) { return i.size; })));
-      bind('filename', infos.map(function (i) { return song.artist + ' - ' + song.title + '.' + i.ext; }).join(', '));
-      bind('dest', 'downloads/' + subfolder());
-      result.hidden = false;
-      announce('Found ' + song.title + ' by ' + song.artist + ', ' + formats.join(' and ') + '.');
+      if (!query) {
+        toast('Type a song name first', 'warning');
+        $('#q').focus();
+        return;
+      }
+
+      hideResults();
+      var run = runs.search;
+      setBusy(submit, 'Searching');
+      status.textContent = 'Searching Soulseek';
+      loading.hidden = false;
+      announce('Searching for ' + query);
+      try {
+        var started = await api('POST', '/api/search', { query: query, formats: formats });
+        var job;
+        for (;;) {
+          await sleep(1000);
+          job = await api('GET', '/api/search/' + started.id);
+          if (run !== runs.search) return;
+          status.textContent = job.status || 'Searching Soulseek';
+          if (job.state !== 'running') break;
+        }
+        loading.hidden = true;
+        if (job.state === 'failed') {
+          toast(job.error || 'The search failed. Please try again.', 'danger');
+        } else if (!job.results.length) {
+          showEmpty(job);
+        } else {
+          showResult(job);
+        }
+      } catch (e) {
+        if (run === runs.search) toast(e.message, 'danger');
+      } finally {
+        if (run === runs.search) {
+          loading.hidden = true;
+          setIdle(submit);
+        }
+      }
     });
 
-    result.addEventListener('click', function (event) {
+    var folder = $('#subfolder');
+    if (folder) {
+      folder.addEventListener('input', function () { bind('dest', 'downloads/' + subfolder()); });
+    }
+
+    result.addEventListener('click', async function (event) {
       var button = event.target.closest('[data-action]');
-      if (!button) return;
-      var title = $('[data-bind="title"]', result).textContent;
-      var artist = $('[data-bind="artist"]', result).textContent;
+      if (!button || isBusy(button) || !current) return;
+      var found = current.results;
+      var title = current.title || current.query;
       var action = button.getAttribute('data-action');
+      var ids = found.map(function (r) { return r.id; });
+
       if (action === 'download-one') {
-        toast('Downloading "' + title + '"', 'success');
+        setBusy(button, 'Fetching');
+        try {
+          var jobs = await fetchFiles(ids, ids.length, function (done, total, progress) {
+            setBusy(button, progress > 0 ? 'Fetching ' + Math.round(progress * 100) + '%' : 'Fetching');
+          });
+          await deliver(jobs, '"' + title + '"');
+        } finally {
+          setIdle(button);
+        }
       } else if (action === 'queue-one') {
-        var formats = checkedValues('format');
-        if (!formats.length) { toast('Pick at least one format', 'warning'); return; }
-        formats.forEach(function (f) {
-          queueSong({ title: title, artist: artist, format: f, size: FORMAT_INFO[f].size });
-        });
-        toast('Queued "' + title + '"', 'success');
+        setBusy(button, 'Queueing');
+        try {
+          await queueResults(ids, '"' + title + '"');
+        } catch (e) {
+          toast(e.message, 'danger');
+        } finally {
+          setIdle(button);
+        }
       }
     });
   }
 
   /* ------------------------------------------------------ Playlist scan */
+
+  var SCAN_TAGS = {
+    pending: '<span class="tag">Waiting</span>',
+    searching: '<span class="tag tag-info">Searching</span>',
+    found: '<span class="tag tag-success">Found</span>',
+    missing: '<span class="tag tag-danger">Not found</span>'
+  };
 
   function initScan() {
     var button = $('#scan-button');
@@ -241,87 +541,186 @@
     var loading = $('#scan-loading');
     var results = $('#scan-results');
     var rows = $('#scan-rows');
+    var allButton = $('[data-action="download-all"], [data-action="queue-all"]', results);
     var server = page === 'server';
-    var found = PLAYLIST.filter(function (s) { return s.found; });
+    var scan = null;   // { id, job, formats }
 
-    button.addEventListener('click', function () {
+    function buildRows(job) {
+      rows.innerHTML = job.tracks.map(function (song, i) {
+        var action = server ? 'queue-row' : 'download-row';
+        var icon = server ? 'playlist_add' : 'download';
+        var label = (server ? 'Queue ' : 'Download ') + song.title;
+        return '<tr data-index="' + i + '" data-state="">' +
+          '<td class="table-numeric col-index">' + (i + 1) + '</td>' +
+          '<td><div class="song-cell"><span class="text-medium">' + escapeHtml(song.title) + '</span>' +
+            '<span class="text-caption text-muted">' + escapeHtml(song.artist || 'Unknown artist') + '</span></div></td>' +
+          '<td class="cell-status"></td>' +
+          '<td class="table-numeric hide-sm text-muted cell-size"></td>' +
+          '<td class="col-action"><button class="button button-icon button-icon-sm" type="button" data-action="' + action + '"' +
+            ' aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '" disabled>' +
+            '<span class="icon icon-sm">' + icon + '</span></button></td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    function updateRows(job) {
+      job.tracks.forEach(function (song, i) {
+        var row = rows.children[i];
+        var signature = song.state + ':' + song.results.length;
+        if (!row || row.getAttribute('data-state') === signature) return;
+        row.setAttribute('data-state', signature);
+        row.classList.toggle('is-missing', song.state === 'missing');
+        $('.cell-status', row).innerHTML = SCAN_TAGS[song.state];
+        setText($('.cell-size', row), song.size ? formatSize(song.size) : '—');
+        $('[data-action]', row).disabled = song.state !== 'found';
+      });
+    }
+
+    function updateSummary(job) {
+      var found = job.tracks.filter(function (t) { return t.state === 'found'; }).length;
+      var missing = job.tracks.filter(function (t) { return t.state === 'missing'; }).length;
+      var left = job.total - found - missing;
+      var parts = ['<strong class="text-success">' + found + ' found</strong>', missing + ' not found'];
+      if (job.state === 'running') parts.push(left + ' left to scan');
+      parts.push(escapeHtml(job.formats.join(' + ')));
+      if (job.skipped) parts.push(job.skipped + ' row' + (job.skipped === 1 ? '' : 's') + ' without a song name skipped');
+      if (server) parts.push('<span class="text-mono">downloads/' + escapeHtml(subfolder()) + '</span>');
+      $('[data-scan-summary]', results).innerHTML = parts.join(' · ');
+      setText($('[data-scan-name]', results), job.name);
+
+      if (!isBusy(allButton) || !allButton.hasAttribute('data-idle')) {
+        var verb = server ? 'Queue all' : 'Download all';
+        var icon = server ? 'playlist_add' : 'download';
+        allButton.innerHTML = '<span class="icon" aria-hidden="true">' + icon + '</span> ' + verb + ' (' + found + ')';
+        var ready = job.state !== 'running' && found > 0;
+        if (ready) allButton.removeAttribute('aria-disabled'); else allButton.setAttribute('aria-disabled', 'true');
+        allButton.title = job.state === 'running' ? 'Available when the scan finishes' : '';
+      }
+    }
+
+    button.addEventListener('click', async function () {
+      if (isBusy(button)) return;
       var file = input && input.files && input.files[0];
-      var format = checkedValues('csv-format').join(' + ');
-      if (!format) {
-        toast('Pick at least one format', 'warning');
+      var formats = checkedValues('csv-format');
+      if (!file) {
+        toast('Choose a playlist CSV first', 'warning');
         return;
       }
-
-      if (button.getAttribute('aria-disabled') === 'true') return;
-
-      results.hidden = true;
-      loading.hidden = false;
-      /* aria-disabled, not disabled: a disabled button drops keyboard focus. */
-      button.setAttribute('aria-disabled', 'true');
-      announce('Scanning playlist');
-
-      setTimeout(function () {
-        loading.hidden = true;
-        button.removeAttribute('aria-disabled');
-        $('[data-scan-name]', results).textContent = file ? file.name : 'road-trip-2026.csv';
-        $('[data-scan-summary]', results).innerHTML =
-          '<strong class="text-success">' + found.length + ' found</strong> · ' +
-          (PLAYLIST.length - found.length) + ' not found · ' + format +
-          (server ? ' · <span class="text-mono">downloads/' + escapeHtml(subfolder()) + '</span>' : '');
-
-        rows.innerHTML = PLAYLIST.map(function (song, i) {
-          var status = song.found
-            ? '<span class="tag tag-success">Found</span>'
-            : '<span class="tag tag-danger">Not found</span>';
-          var action = server ? 'queue-row' : 'download-row';
-          var icon = server ? 'playlist_add' : 'download';
-          var label = (server ? 'Queue ' : 'Download ') + song.title;
-          return '<tr class="' + (song.found ? '' : 'is-missing') + '" data-index="' + i + '">' +
-            '<td class="table-numeric col-index">' + (i + 1) + '</td>' +
-            '<td><div class="song-cell"><span class="text-medium">' + escapeHtml(song.title) + '</span>' +
-              '<span class="text-caption text-muted">' + escapeHtml(song.artist) + '</span></div></td>' +
-            '<td>' + status + '</td>' +
-            '<td class="table-numeric hide-sm text-muted">' + (song.size || '—') + '</td>' +
-            '<td class="col-action"><button class="button button-icon button-icon-sm" type="button" data-action="' + action + '"' +
-              ' aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '"' + (song.found ? '' : ' disabled') + '>' +
-              '<span class="icon icon-sm">' + icon + '</span></button></td>' +
-            '</tr>';
-        }).join('');
-        results.hidden = false;
-        announce('Scan complete. ' + found.length + ' songs found, ' + (PLAYLIST.length - found.length) + ' not found.');
-      }, 900);
-    });
-
-    results.addEventListener('click', function (event) {
-      var target = event.target.closest('[data-action]');
-      if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
-      var action = target.getAttribute('data-action');
-      var formats = checkedValues('csv-format');
       if (!formats.length) {
         toast('Pick at least one format', 'warning');
         return;
       }
+      if (file.size > 500 * 1024) {
+        toast('That file is too big. A playlist CSV should be well under 500 KB.', 'warning');
+        return;
+      }
 
-      if (action === 'download-all') {
-        toast('Downloading ' + found.length + ' songs', 'success');
-      } else if (action === 'queue-all') {
-        found.forEach(function (s) {
-          formats.forEach(function (f) { queueSong({ title: s.title, artist: s.artist, format: f, size: s.size }); });
-        });
-        toast('Queued ' + found.length * formats.length + ' downloads', 'success');
-      } else {
-        var song = PLAYLIST[+target.closest('tr').getAttribute('data-index')];
-        if (action === 'download-row') {
-          toast('Downloading "' + song.title + '"', 'success');
+      cancelScanJob();
+      var run = runs.scan;
+      results.hidden = true;
+      loading.hidden = false;
+      setBusy(button, 'Uploading');
+      announce('Scanning playlist');
+      try {
+        var started = await api('POST', '/api/scan?name=' + encodeURIComponent(file.name) +
+          '&formats=' + encodeURIComponent(formats.join(',')), undefined, await file.arrayBuffer());
+        if (run !== runs.scan) return;
+        runs.scanJob = started.id;
+        scan = { id: started.id, job: null };
+        var shown = false;
+        for (;;) {
+          var job = await api('GET', '/api/scan/' + started.id);
+          if (run !== runs.scan) return;
+          scan.job = job;
+          if (job.state === 'failed') throw new Error(job.error || 'The scan failed. Please try again.');
+          if (!shown) {
+            shown = true;
+            buildRows(job);
+            loading.hidden = true;
+            results.hidden = false;
+            setIdle(button);
+          }
+          updateRows(job);
+          updateSummary(job);
+          if (job.state !== 'running') break;
+          await sleep(1500);
+        }
+        runs.scanJob = null;
+        var found = scan.job.tracks.filter(function (t) { return t.state === 'found'; }).length;
+        announce('Scan complete. ' + found + ' songs found, ' + (scan.job.total - found) + ' not found.');
+      } catch (e) {
+        if (run === runs.scan) toast(e.message, 'danger');
+      } finally {
+        if (run === runs.scan) {
+          loading.hidden = true;
+          setIdle(button);
+        }
+      }
+    });
+
+    function resultIds(tracks) {
+      var ids = [];
+      tracks.forEach(function (t) { t.results.forEach(function (r) { ids.push(r.id); }); });
+      return ids;
+    }
+
+    results.addEventListener('click', async function (event) {
+      var target = event.target.closest('[data-action]');
+      if (!target || target.disabled || isBusy(target) || !scan || !scan.job) return;
+      var action = target.getAttribute('data-action');
+      var found = scan.job.tracks.filter(function (t) { return t.state === 'found'; });
+
+      try {
+        if (action === 'download-all') {
+          if (scan.job.state === 'running' || !found.length) return;
+          setBusy(target, 'Fetching');
+          var all = resultIds(found);
+          var jobs = await fetchFiles(all, 3, function (done, total) {
+            setBusy(target, 'Fetching ' + done + ' of ' + total + ' files');
+          });
+          var zipName = scan.job.name.replace(/\.csv$/i, '');
+          await deliver(jobs, found.length + ' songs', zipName);
+        } else if (action === 'queue-all') {
+          if (scan.job.state === 'running' || !found.length) return;
+          setBusy(target, 'Queueing');
+          var res = await queueResults(resultIds(found), found.length + ' songs');
+          announce('Queued ' + res.queued + ' downloads');
         } else {
-          formats.forEach(function (f) { queueSong({ title: song.title, artist: song.artist, format: f, size: song.size }); });
+          var song = scan.job.tracks[+target.closest('tr').getAttribute('data-index')];
+          var ids = song.results.map(function (r) { return r.id; });
+          var label = '"' + song.title + '"';
+          setBusy(target, '');
+          target.innerHTML = '<span class="icon icon-sm" aria-hidden="true">hourglass_top</span>';
+          var ok;
+          if (action === 'download-row') {
+            ok = await deliver(await fetchFiles(ids, ids.length), label);
+          } else {
+            ok = (await queueResults(ids, label)).queued > 0;
+          }
           /* Stay focusable (aria-disabled) so focus is not dropped. */
-          target.setAttribute('aria-disabled', 'true');
-          var queuedLabel = 'Queued ' + song.title;
-          target.setAttribute('aria-label', queuedLabel);
-          target.setAttribute('title', queuedLabel);
-          target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true">check</span>';
-          toast('Queued "' + song.title + '"', 'success');
+          var verb = action === 'download-row' ? 'Downloaded ' : 'Queued ';
+          if (ok) {
+            target.setAttribute('aria-label', verb + song.title);
+            target.setAttribute('title', verb + song.title);
+            target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true">check</span>';
+            target.removeAttribute('data-idle');
+            return;
+          }
+          target.innerHTML = '<span class="icon icon-sm" aria-hidden="true">' + (action === 'download-row' ? 'download' : 'playlist_add') + '</span>';
+          target.removeAttribute('data-idle');
+          target.removeAttribute('aria-disabled');
+        }
+      } catch (e) {
+        toast(e.message, 'danger');
+        if (action === 'download-row' || action === 'queue-row') {
+          target.innerHTML = '<span class="icon icon-sm" aria-hidden="true">' + (action === 'download-row' ? 'download' : 'playlist_add') + '</span>';
+          target.removeAttribute('data-idle');
+          target.removeAttribute('aria-disabled');
+        }
+      } finally {
+        if (action === 'download-all' || action === 'queue-all') {
+          setIdle(target);
+          updateSummary(scan.job);
         }
       }
     });
@@ -331,7 +730,8 @@
      One row renderer for both the server page's "Your queue" and the All
      page. The tbody's data-columns says which cells it has. Status is its
      own column; progress sits in the next one, the bar with its percentage
-     beside it. */
+     beside it. Rows are kept between refreshes and only touched when
+     something about them changed, so focus stays where it is. */
 
   var STATUS_TAG = {
     downloading: '<span class="tag tag-info">Downloading</span>',
@@ -355,7 +755,8 @@
     var status = row.getAttribute('data-status');
     var value = +row.getAttribute('data-progress') || 0;
     if (status === 'downloading' || status === 'paused') {
-      return '<div class="progress-cell">' +
+      var note = row.getAttribute('data-note');
+      return '<div class="progress-cell"' + (note ? ' title="' + escapeHtml(note) + '"' : '') + '>' +
         '<div class="progress-linear' + (status === 'paused' ? ' progress-paused' : '') + '" role="progressbar"' +
           ' aria-valuenow="' + value + '" aria-valuemin="0" aria-valuemax="100"' +
           ' aria-valuetext="' + progressText(row, value) + '" aria-label="Progress of ' + escapeHtml(rowName(row)) + '">' +
@@ -363,13 +764,13 @@
         '<span class="text-caption text-muted progress-value" aria-hidden="true">' + value + '%</span>' +
       '</div>';
     }
-    var note = {
+    var text = {
       queued: 'Waiting',
       cancelled: '—',
       failed: row.getAttribute('data-note') || 'Error',
       done: row.getAttribute('data-size') || ''
     }[status];
-    return '<span class="text-caption text-muted">' + escapeHtml(note) + '</span>';
+    return '<span class="text-caption text-muted">' + escapeHtml(text) + '</span>';
   }
 
   function actionButton(action, icon, label, name) {
@@ -389,25 +790,40 @@
     return html + actionButton('delete', 'delete', 'Delete', name);
   }
 
+  /* Redraws a cell, keeping keyboard focus on the same kind of button. */
   function renderRow(row) {
     var cell;
     if ((cell = $('.cell-status', row))) cell.innerHTML = STATUS_TAG[row.getAttribute('data-status')];
     if ((cell = $('.cell-progress', row))) cell.innerHTML = progressHtml(row);
-    if ((cell = $('.row-actions', row))) cell.innerHTML = actionsHtml(row);
+    if ((cell = $('.row-actions', row))) {
+      var focused = cell.contains(document.activeElement) ? document.activeElement.getAttribute('data-action') : null;
+      cell.innerHTML = actionsHtml(row);
+      if (focused) {
+        var next = $('[data-action="' + focused + '"]', cell) || $('[data-action]', cell);
+        if (next) next.focus();
+      }
+    }
+  }
+
+  function applyItem(row, item) {
+    row.setAttribute('data-status', item.status);
+    row.setAttribute('data-progress', item.progress || 0);
+    row.setAttribute('data-size', item.size ? formatSize(item.size) : '');
+    row.setAttribute('data-bytes', item.size || 0);
+    row.setAttribute('data-note', item.note || '');
+    row.setAttribute('data-finished', item.finished || 0);
   }
 
   function buildRow(item, columns) {
     var row = document.createElement('tr');
-    row.setAttribute('data-status', item.status);
-    row.setAttribute('data-progress', item.progress || 0);
-    if (item.size) row.setAttribute('data-size', item.size);
-    if (item.note) row.setAttribute('data-note', item.note);
+    row.setAttribute('data-id', item.id);
+    applyItem(row, item);
     row.innerHTML = columns.map(function (col) {
       switch (col) {
         case 'song':
           return '<td class="cell-song"><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(item.title) + '</span>' +
-            '<span class="text-caption text-muted">' + escapeHtml(item.artist + ' · ' + item.format) + '</span></div></td>';
-        case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml(item.folder) + '</td>';
+            '<span class="text-caption text-muted">' + escapeHtml((item.artist ? item.artist + ' · ' : '') + item.format) + '</span></div></td>';
+        case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml('downloads/' + item.folder) + '</td>';
         case 'by':       return '<td class="hide-lg">' + escapeHtml(item.by) + '</td>';
         case 'status':   return '<td class="cell-status"></td>';
         case 'progress': return '<td class="cell-progress"></td>';
@@ -419,40 +835,39 @@
     return row;
   }
 
-  function setStatus(row, status) {
-    row.setAttribute('data-status', status);
-    renderRow(row);
-  }
-
-  /* Adds a song from the server page's search or scan to "Your queue",
-     after the active rows and ahead of anything finished. */
-  function queueSong(song) {
-    var tbody = $('#queue-rows');
-    if (!tbody) return;
-    var columns = tbody.getAttribute('data-columns').split(' ');
-    var row = buildRow({
-      title: song.title, artist: song.artist, format: song.format, size: song.size,
-      folder: subfolder(), by: 'admin', status: 'queued'
-    }, columns);
-    tbody.insertBefore(row, $('tr[data-status="done"], tr[data-status="failed"], tr[data-status="cancelled"]', tbody));
-  }
-
-  /* Nudges every downloading row forward so the queue looks alive. */
-  function tick(tbody) {
-    $$('tr[data-status="downloading"]', tbody).forEach(function (row) {
-      var value = Math.min(100, +row.getAttribute('data-progress') + 1 + Math.floor(Math.random() * 3));
-      row.setAttribute('data-progress', value);
-      if (value >= 100) {
-        setStatus(row, 'done');
-        var next = $('tr[data-status="queued"]', tbody);
-        if (next) setStatus(next, 'downloading');
-        return;
-      }
+  function updateRow(row, item) {
+    var before = ['data-status', 'data-note', 'data-size'].map(function (a) { return row.getAttribute(a); }).join('|');
+    var progress = row.getAttribute('data-progress');
+    applyItem(row, item);
+    var after = ['data-status', 'data-note', 'data-size'].map(function (a) { return row.getAttribute(a); }).join('|');
+    if (before !== after) {
+      renderRow(row);
+    } else if (progress !== row.getAttribute('data-progress')) {
+      /* Only the percentage moved: nudge the bar rather than rebuild it. */
       var bar = $('.progress-linear', row);
+      if (!bar) return;
+      var value = +row.getAttribute('data-progress');
       bar.setAttribute('aria-valuenow', value);
       bar.setAttribute('aria-valuetext', progressText(row, value));
       $('.progress-bar', bar).style.setProperty('--value', value + '%');
-      $('.progress-value', row).textContent = value + '%';
+      setText($('.progress-value', row), value + '%');
+    }
+  }
+
+  /* Makes the table body list exactly these items, in this order. */
+  function syncRows(tbody, items, columns) {
+    var existing = {};
+    $$('tr', tbody).forEach(function (row) { existing[row.getAttribute('data-id')] = row; });
+    var seen = {};
+    items.forEach(function (item, index) {
+      var row = existing[item.id];
+      if (row) updateRow(row, item); else row = buildRow(item, columns);
+      seen[item.id] = true;
+      var at = tbody.children[index];
+      if (at !== row) tbody.insertBefore(row, at || null);
+    });
+    Object.keys(existing).forEach(function (id) {
+      if (!seen[id]) existing[id].remove();
     });
   }
 
@@ -462,10 +877,11 @@
     if (page !== 'server') return;
     var tbody = $('#queue-rows');
     var columns = tbody.getAttribute('data-columns').split(' ');
-    QUEUE.filter(function (item) { return item.by === 'admin'; }).forEach(function (item) {
-      tbody.appendChild(buildRow(item, columns));
-    });
-    setInterval(function () { tick(tbody); }, 1200);
+    poll(async function () {
+      var data = await api('GET', '/api/queue');
+      setActiveCount(data.active);
+      syncRows(tbody, data.items.filter(function (item) { return item.by === data.me; }), columns);
+    }, 1500);
   }
 
   /* --------------------------------------------------------- All page */
@@ -486,8 +902,7 @@
     var search = $('#queue-search');
     var pendingDelete = null;
     var dialog = $('#dlg-delete');
-
-    QUEUE.forEach(function (item) { tbody.appendChild(buildRow(item, columns)); });
+    var speed = 0;
 
     function nameOf(row) { return $('[data-name]', row).textContent; }
 
@@ -496,9 +911,19 @@
       var rows = $$('tr', tbody);
       var visible = 0;
       var counts = { downloading: 0, queued: 0, stopped: 0, done: 0 };
+      var midnight = new Date().setHours(0, 0, 0, 0);
+      var doneBytes = 0;
       rows.forEach(function (row) {
         var status = row.getAttribute('data-status');
-        if (STOPPED.indexOf(status) > -1) counts.stopped++; else counts[status]++;
+        if (STOPPED.indexOf(status) > -1) {
+          counts.stopped++;
+        } else if (status !== 'done') {
+          counts[status]++;
+        } else if (+row.getAttribute('data-finished') >= midnight) {
+          /* "Done today" counts what finished since midnight */
+          counts.done++;
+          doneBytes += +row.getAttribute('data-bytes');
+        }
         var show = FILTERS[filter](status) && (!term || row.textContent.toLowerCase().indexOf(term) > -1);
         row.hidden = !show;
         if (show) visible++;
@@ -506,11 +931,18 @@
       Object.keys(counts).forEach(function (key) {
         setText($('[data-count="' + key + '"]'), counts[key]);
       });
-      $$('.badge-count, .nav-item-trailing').forEach(function (el) {
-        setText(el, counts.downloading + counts.queued);
-      });
+      setText($('[data-bind="speed"]'), formatSpeed(speed));
+      setText($('[data-bind="done-size"]'), doneBytes ? formatSize(doneBytes) : '0 MB');
       $('#queue-empty').hidden = visible > 0;
       setText($('#queue-summary'), visible + ' of ' + rows.length + ' items');
+    }
+
+    async function load() {
+      var data = await api('GET', '/api/queue');
+      speed = data.speed;
+      setActiveCount(data.active);
+      syncRows(tbody, data.items, columns);
+      refresh();
     }
 
     $('#status-filter').addEventListener('click', function (event) {
@@ -521,66 +953,66 @@
     });
     search.addEventListener('input', refresh);
 
-    tbody.addEventListener('click', function (event) {
+    tbody.addEventListener('click', async function (event) {
       var button = event.target.closest('[data-action]');
       if (!button) return;
       var row = button.closest('tr');
       var name = nameOf(row);
+      var id = row.getAttribute('data-id');
       var action = button.getAttribute('data-action');
-      /* The buttons are rebuilt when the status changes, which would drop
-         keyboard focus on the page. Put it on the row's first action. */
-      var keepFocus = action !== 'delete';
-      if (action === 'pause') {
-        setStatus(row, 'paused');
-        toast('Paused "' + name + '"');
-      } else if (action === 'resume') {
-        setStatus(row, 'downloading');
-        toast('Resumed "' + name + '"');
-      } else if (action === 'cancel') {
-        setStatus(row, 'cancelled');
-        toast('Cancelled "' + name + '"');
-      } else if (action === 'delete') {
+      if (action === 'delete') {
         pendingDelete = row;
         $('#dlg-delete-name').textContent = name;
         UI.openDialog('dlg-delete');
+        return;
       }
-      refresh();
-      if (keepFocus) {
-        var next = $('.row-actions [data-action]', row);
-        if (next) next.focus();
+      try {
+        await api('POST', '/api/queue/' + encodeURIComponent(id) + '/' + action);
+        toast({ pause: 'Paused', resume: 'Resumed', cancel: 'Cancelled' }[action] + ' "' + name + '"');
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
       }
     });
 
-    dialog.addEventListener('close', function () {
-      if (dialog.returnValue === 'delete' && pendingDelete) {
-        var name = nameOf(pendingDelete);
-        var sibling = pendingDelete.nextElementSibling;
-        while (sibling && sibling.hidden) sibling = sibling.nextElementSibling;
-        pendingDelete.remove();
-        toast('Deleted "' + name + '"', 'success');
-        refresh();
-        var target = sibling && $('.row-actions [data-action]', sibling);
-        (target || search).focus();
-      }
+    dialog.addEventListener('close', async function () {
+      var row = pendingDelete;
       pendingDelete = null;
+      if (dialog.returnValue !== 'delete' || !row) return;
+      var name = nameOf(row);
+      var sibling = row.nextElementSibling;
+      while (sibling && sibling.hidden) sibling = sibling.nextElementSibling;
+      try {
+        await api('DELETE', '/api/queue/' + encodeURIComponent(row.getAttribute('data-id')));
+        toast('Deleted "' + name + '"', 'success');
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
+      var target = sibling && sibling.isConnected && $('.row-actions [data-action]', sibling);
+      (target || search).focus();
     });
 
-    $('[data-action="pause-all"]').addEventListener('click', function () {
-      $$('tr[data-status="downloading"], tr[data-status="queued"]', tbody).forEach(function (row) {
-        setStatus(row, 'paused');
-      });
-      toast('Paused everything');
-      refresh();
+    $('[data-action="pause-all"]').addEventListener('click', async function () {
+      try {
+        var res = await api('POST', '/api/queue/pause-all');
+        toast(res.paused ? 'Paused everything' : 'Nothing to pause');
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
     });
-    $('[data-action="clear-done"]').addEventListener('click', function () {
-      var done = $$('tr[data-status="done"]', tbody);
-      done.forEach(function (row) { row.remove(); });
-      toast('Cleared ' + done.length + ' finished');
-      refresh();
+    $('[data-action="clear-done"]').addEventListener('click', async function () {
+      try {
+        var res = await api('POST', '/api/queue/clear-done');
+        toast('Cleared ' + res.cleared + ' finished');
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
     });
 
-    setInterval(function () { tick(tbody); refresh(); }, 1200);
-    refresh();
+    poll(load, 1500);
   }
 
   /* ------------------------------------------------------------ Login */
@@ -588,16 +1020,87 @@
   function initLogin() {
     var form = $('#login-form');
     if (!form) return;
-    form.addEventListener('submit', function (event) {
+    var errorEl = $('#login-error');
+    var placeholder = $('#login-turnstile');
+    var submit = $('button[type="submit"]', form);
+    var widget = false;
+
+    function showError(message) {
+      errorEl.innerHTML = '<span class="icon icon-sm">error</span> ' + escapeHtml(message);
+      errorEl.hidden = false;
+    }
+
+    api('GET', '/api/session').then(function (session) {
+      if (session.user) {
+        window.location.href = 'server.html';
+        return;
+      }
+      if (!session.adminEnabled) {
+        showError('Admin sign-in is not set up on this server.');
+        submit.setAttribute('aria-disabled', 'true');
+      }
+      if (session.turnstileSiteKey) {
+        /* Swap the placeholder for the real Cloudflare Turnstile widget. */
+        widget = true;
+        var el = document.createElement('div');
+        el.className = 'cf-turnstile';
+        el.setAttribute('data-sitekey', session.turnstileSiteKey);
+        el.setAttribute('data-theme', 'dark');
+        placeholder.replaceWith(el);
+        var script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
+      } else {
+        /* No Turnstile configured: nothing to show */
+        placeholder.hidden = true;
+      }
+    }, function (e) { showError(e.message); });
+
+    form.addEventListener('submit', async function (event) {
       event.preventDefault();
-      window.location.href = 'server.html';
+      if (isBusy(submit)) return;
+      errorEl.hidden = true;
+      var token = form.querySelector('[name="cf-turnstile-response"]');
+      if (widget && !(token && token.value)) {
+        showError('Please complete the security check first.');
+        return;
+      }
+      setBusy(submit, 'Signing in');
+      try {
+        await api('POST', '/api/login', {
+          username: $('#login-user').value,
+          password: $('#login-pass').value,
+          remember: $('#login-remember').checked,
+          turnstile: token ? token.value : null
+        });
+        window.location.href = 'server.html';
+      } catch (e) {
+        showError(e.message);
+        $('#login-pass').value = '';
+        $('#login-pass').focus();
+        if (widget && window.turnstile) window.turnstile.reset();
+        setIdle(submit);
+      }
     });
   }
 
+  initChrome();
   initPanels();
   initSearch();
   initScan();
   initMyQueue();
   initAll();
   initLogin();
+
+  /* Remember the server folder between visits */
+  var folderField = $('#subfolder');
+  if (folderField) {
+    try { folderField.value = localStorage.getItem('songdl-folder') || ''; } catch (e) {}
+    folderField.dispatchEvent(new Event('input'));
+    folderField.addEventListener('input', function () {
+      try { localStorage.setItem('songdl-folder', folderField.value); } catch (e) {}
+    });
+  }
 })();

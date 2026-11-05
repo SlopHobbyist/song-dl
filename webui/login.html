@@ -28,14 +28,14 @@
       <form class="auth-form" id="login-form" aria-labelledby="login-title">
         <div class="field">
           <label class="field-label" for="login-user">Username</label>
-          <input class="input" id="login-user" type="text" autocomplete="username" value="admin">
+          <input class="input" id="login-user" type="text" autocomplete="username" name="username" required>
         </div>
         <div class="field">
           <label class="field-label" for="login-pass">Password</label>
-          <input class="input" id="login-pass" type="password" autocomplete="current-password" value="mockup-password">
+          <input class="input" id="login-pass" type="password" autocomplete="current-password" name="password" required>
         </div>
         <div class="auth-row">
-          <label class="choice"><input type="checkbox" checked><span class="choice-box"></span><span class="choice-label">Stay signed in</span></label>
+          <label class="choice"><input type="checkbox" id="login-remember" name="remember" checked><span class="choice-box"></span><span class="choice-label">Stay signed in</span></label>
         </div>
         <!-- TODO: Cloudflare Turnstile. Add this to <head> and replace the placeholder with the real widget:
              <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -44,6 +44,7 @@
         <div class="turnstile-placeholder" id="login-turnstile" role="img" aria-label="Cloudflare Turnstile placeholder">
           Cloudflare Turnstile
         </div>
+        <p class="field-error" id="login-error" role="alert" hidden></p>
         <button class="button button-filled button-block" type="submit">Sign in</button>
       </form>
     </div>
