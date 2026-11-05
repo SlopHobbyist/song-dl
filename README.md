@@ -9,7 +9,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 ## Differentiators
 
 - Easy for noobs, simply search then download
-- We filter out crap like remixe, live versions, and files labeled "PRIVATE"
+- We filter out crap like remix, live versions, and files labeled "PRIVATE"
 - Auto retries a different uploader if slow or stuck
 - Optional captcha solver for direct messages
 
