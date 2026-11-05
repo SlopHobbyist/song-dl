@@ -66,17 +66,12 @@ python -m songdl setup && python -m songdl serve
 ```
 
 ## License
-SLSKD is licensed under `GNU Affero GPLv3`.
-This repository and all contained code is licensed under `GNU GPLv3`. See ./LICENSE.txt for more info.
+This repository and all contained code is licensed under `GNU GPLv3`. See `./LICENSE.txt` for more info.
 
-Fonts bundled in `./webui/vendored/web-design-wavefront/assets/fonts/` keep their own licenses, which are next to them:
+[Slskd](https://github.com/slskd/slskd) is licensed under `GNU Affero GPLv3`.
+Roboto, Roboto Mono, and Sora fonts are licensed under `SIL Open Font License 1.1`.
+Material Icons font is licensed under `Apache License 2.0`.
 
-| Font | License |
-| --- | --- |
-| Roboto | `SIL Open Font License 1.1` (Roboto-OFL.txt) |
-| Roboto Mono | `SIL Open Font License 1.1` (RobotoMono-OFL.txt) |
-| Sora | `SIL Open Font License 1.1` (Sora-OFL.txt) |
-| Material Icons | `Apache License 2.0` (MaterialIcons-LICENSE.txt) |
 
 ## Disclosure
 
