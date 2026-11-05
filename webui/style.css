@@ -171,6 +171,20 @@ main:focus { outline: none; }
 .auth-page { display: grid; place-items: center; }
 .auth-card-flat { box-shadow: none; }
 
+/* Stand-in for the Cloudflare Turnstile widget (standard size: 300x65). */
+.turnstile-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 300px;
+  height: 65px;
+  border: var(--border-width) dashed var(--color-divider);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-sunken);
+  color: var(--color-on-surface-muted);
+  font-size: .875rem;
+}
+
 /* ------------------------------------------------------------ Small */
 @media (max-width: 720px) {
   .hero { padding-top: var(--space-7); }
