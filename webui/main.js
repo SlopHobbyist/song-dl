@@ -312,7 +312,7 @@
     row.innerHTML = columns.map(function (col) {
       switch (col) {
         case 'song':
-          return '<td><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(item.title) + '</span>' +
+          return '<td class="cell-song"><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(item.title) + '</span>' +
             '<span class="text-caption text-muted">' + escapeHtml(item.artist + ' · ' + item.format) + '</span></div></td>';
         case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml(item.folder) + '</td>';
         case 'by':       return '<td class="hide-lg">' + escapeHtml(item.by) + '</td>';

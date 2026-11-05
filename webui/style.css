@@ -184,5 +184,37 @@ body:not(:has(.drawer))::before {
   .progress-cell { min-width: 96px; gap: var(--space-2); }
   .queue-table th, .queue-table td { padding-inline: var(--space-3); }
   .search-sm { max-width: none; flex: 1 1 100%; }
-  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+
+  /* Page header: title, then the two actions side by side at equal width. */
+  .page-body .row.justify-between { flex-direction: column; align-items: stretch; gap: var(--space-4); }
+  .page-body .row.justify-between > .row { width: 100%; }
+  .page-body .row.justify-between > .row > .button { flex: 1 1 0; white-space: nowrap; padding-inline: var(--space-3); }
+
+  /* Toolbar: filter chips span the width and share it. */
+  .table-toolbar .segmented { width: 100%; }
+  .table-toolbar .segmented > .button { flex: 1 1 auto; padding-inline: var(--space-2); font-size: var(--type-caption-size); }
+  .table-toolbar .spacer { display: none; }
+
+  /* Queue rows become cards: song + status on top, progress + actions below. */
+  .queue-table, .queue-table tbody { display: block; }
+  .queue-table thead { display: none; }
+  .queue-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "song status" "progress actions";
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--color-divider);
+  }
+  .queue-table tr:last-child { border-bottom: 0; }
+  .queue-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .queue-table .cell-song     { grid-area: song; }
+  .queue-table .cell-status   { grid-area: status; justify-self: end; }
+  .queue-table .cell-progress { grid-area: progress; }
+  .queue-table .row-actions   { grid-area: actions; width: auto; }
+  .queue-table .song-cell .text-medium,
+  .queue-table .song-cell .text-caption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .progress-cell { min-width: 0; }
 }
