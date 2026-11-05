@@ -133,14 +133,22 @@ async def test_scan_rejects_a_bad_csv(site):
 
 
 async def test_admin_pages_and_queue_need_a_login(site):
-    res = await site.get('/server.html', allow_redirects=False)
-    assert res.status == 302 and res.headers['Location'] == '/login.html'
-    assert (await site.get('/all.html', allow_redirects=False)).status == 302
+    res = await site.get('/server/', allow_redirects=False)
+    assert res.status == 302 and res.headers['Location'] == '/login/'
+    assert (await site.get('/all/', allow_redirects=False)).status == 302
     for method, path in (('get', '/api/queue'), ('post', '/api/queue'), ('post', '/api/queue/x/pause'),
                          ('delete', '/api/queue/x'), ('post', '/api/queue/clear-done')):
         assert (await getattr(site, method)(path)).status == 401
-    assert (await site.get('/index.html')).status == 200
-    assert (await site.get('/login.html')).status == 200
+    assert (await site.get('/')).status == 200
+    assert (await site.get('/login/')).status == 200
+
+
+async def test_pages_live_at_folder_addresses(site):
+    for path, target in (('/index.html', '/'), ('/login', '/login/'), ('/login.html', '/login/'),
+                         ('/login/index.html', '/login/'), ('/all.html', '/all/'), ('/server?x=1', '/server/?x=1')):
+        res = await site.get(path, allow_redirects=False)
+        assert res.status == 301 and res.headers['Location'] == target, path
+    assert (await site.get('/login/index.htm')).status == 404
 
 
 async def test_only_the_site_files_are_served(site):
@@ -165,7 +173,7 @@ async def test_login(site):
     cookie = res.headers['Set-Cookie']
     assert 'HttpOnly' in cookie and 'SameSite=Strict' in cookie and 'Max-Age' not in cookie   # not remembered
     assert (await (await site.get('/api/session')).json())['user'] == 'admin'
-    assert (await site.get('/server.html', allow_redirects=False)).status == 200
+    assert (await site.get('/server/', allow_redirects=False)).status == 200
 
     await site.post('/api/logout')
     assert (await (await site.get('/api/session')).json())['user'] is None
@@ -179,7 +187,7 @@ async def test_login_is_off_without_admins(tmp_path, fake):
     try:
         res = await client.post('/api/login', json={'username': 'admin', 'password': 'whatever-it-is'})
         assert res.status == 403
-        assert (await client.get('/server.html', allow_redirects=False)).status == 302
+        assert (await client.get('/server/', allow_redirects=False)).status == 302
     finally:
         await client.close()
 

@@ -4,7 +4,7 @@
 This is a website that allows users to download songs.
 
 ## Regular
-index.html
+`/` (webui/index.html)
 For regular non logged in users.
 - Type in a song name
 - Choose any of WAV, AIFF, FLAC, MP3 (checkboxes; WAV and AIFF are on by default)

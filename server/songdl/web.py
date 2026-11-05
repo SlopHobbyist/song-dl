@@ -33,12 +33,19 @@ MAX_ZIP_FILES = 300
 ZIP_CHUNK = 1024 * 1024
 CLEANUP_SECONDS = 3600
 
+# The pages by the address the browser shows, and the file in webui/ behind each
+PAGES = {'/': 'index.html', '/login/': 'login/index.html',
+         '/server/': 'server/index.html', '/all/': 'all/index.html'}
 # Pages only admins may open
-ADMIN_PAGES = {'/server.html', '/all.html'}
-# What the web server hands out from webui/: the pages, the site's files and the
+ADMIN_PAGES = {'/server/', '/all/'}
+# Other spellings of a page's address (old .html links, no trailing slash) and where they go
+PAGE_ALIASES = {'/index.html': '/'} | {
+    alias: page for page in PAGES if page != '/'
+    for alias in (page.rstrip('/'), page.rstrip('/') + '.html', page + 'index.html')}
+# The other files the web server hands out from webui/: the site's files and the
 # kit's stylesheet, script and fonts (the kit's folder also holds docs and a .git)
 PUBLIC_FILE = re.compile(
-    r'^/(index\.html|login\.html|server\.html|all\.html|style\.css|main\.js'
+    r'^/(style\.css|main\.js'
     r'|vendored/web-design-wavefront/(design_language\.(css|js)|assets/fonts/[\w.-]+\.woff2))$')
 
 
@@ -140,7 +147,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         request[USER] = auth.user(request.cookies.get(COOKIE))
         try:
             if request.path in ADMIN_PAGES and not request[USER]:
-                raise web.HTTPFound('/login.html')
+                raise web.HTTPFound('/login/')
             response = await handler(request)
         except UserError as e:
             response = error(str(e), e.status)
@@ -152,7 +159,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         response.headers.setdefault('X-Content-Type-Options', 'nosniff')
         response.headers.setdefault('Referrer-Policy', 'no-referrer')
         response.headers.setdefault('X-Frame-Options', 'DENY')
-        if request.path.startswith('/api/') or request.path.endswith('.html') or request.path == '/':
+        if request.path.startswith('/api/') or request.path in PAGES:
             response.headers.setdefault('Cache-Control', 'no-store')
         return response
 
@@ -355,12 +362,17 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         return web.json_response({'ok': True, 'soulseek': connected})
 
     async def page(request):
-        path = '/' + request.match_info.get('path', '')
-        if path == '/':
-            path = '/index.html'
-        if not PUBLIC_FILE.match(path):
+        path = request.path
+        if path in PAGE_ALIASES:
+            query = request.query_string
+            raise web.HTTPMovedPermanently(PAGE_ALIASES[path] + ('?' + query if query else ''))
+        if path in PAGES:
+            file = PAGES[path]
+        elif PUBLIC_FILE.match(path):
+            file = path.lstrip('/')
+        else:
             raise web.HTTPNotFound()
-        return web.FileResponse(webui / path.lstrip('/'), headers={'Cache-Control': 'no-cache'})
+        return web.FileResponse(webui / file, headers={'Cache-Control': 'no-cache'})
 
     app = web.Application(middlewares=[middleware], client_max_size=MAX_UPLOAD)
     app.add_routes([

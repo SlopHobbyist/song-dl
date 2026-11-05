@@ -19,10 +19,10 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 
 | Page | Who can access | Description |
 | --- | --- | --- |
-| `index.html` | everyone | Search songs or playlists, download them |
-| `login.html` | admins | Sign in (Cloudflare Turnstile optional) |
-| `server.html` | admins | Same as index.html, but saved onto server instead |
-| `all.html` | admins | Queue list, delete pause resume cancel stuff |
+| `/` | everyone | Search songs or playlists, download them |
+| `/login/` | admins | Sign in (Cloudflare Turnstile optional) |
+| `/server/` | admins | Same as `/`, but saved onto server instead |
+| `/all/` | admins | Queue list, delete pause resume cancel stuff |
 
 WebUI at `./webui/`
 Server at `./server/songdl/`

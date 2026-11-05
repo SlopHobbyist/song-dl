@@ -177,7 +177,7 @@
     if (!res.ok) {
       /* The session ended (or never began): the admin pages need a sign-in. */
       if (res.status === 401 && (page === 'server' || page === 'all')) {
-        window.location.href = 'login.html';
+        window.location.href = '/login/';
       }
       var error = new Error(data.error || 'Something went wrong. Please try again.');
       error.status = res.status;
@@ -221,7 +221,7 @@
       link.addEventListener('click', async function (event) {
         event.preventDefault();
         try { await api('POST', '/api/logout'); } catch (e) {}
-        window.location.href = 'index.html';
+        window.location.href = '/';
       });
     });
 
@@ -230,7 +230,7 @@
     if (admin) {
       api('GET', '/api/session').then(function (session) {
         if (!session.user) return;
-        admin.setAttribute('href', 'server.html');
+        admin.setAttribute('href', '/server/');
         admin.setAttribute('aria-label', 'Server');
         admin.setAttribute('title', 'Server');
         $('.icon', admin).textContent = 'dns';
@@ -1032,7 +1032,7 @@
 
     api('GET', '/api/session').then(function (session) {
       if (session.user) {
-        window.location.href = 'server.html';
+        window.location.href = '/server/';
         return;
       }
       if (!session.adminEnabled) {
@@ -1075,7 +1075,7 @@
           remember: $('#login-remember').checked,
           turnstile: token ? token.value : null
         });
-        window.location.href = 'server.html';
+        window.location.href = '/server/';
       } catch (e) {
         showError(e.message);
         $('#login-pass').value = '';

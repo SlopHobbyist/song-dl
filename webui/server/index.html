@@ -7,10 +7,10 @@
 <title>Server · Song-DL</title>
 <meta name="description" content="Queue songs and playlists to download onto the server.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="vendored/web-design-wavefront/design_language.css">
-<link rel="stylesheet" href="style.css">
-<script src="vendored/web-design-wavefront/design_language.js" defer></script>
-<script src="main.js" defer></script>
+<link rel="stylesheet" href="/vendored/web-design-wavefront/design_language.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendored/web-design-wavefront/design_language.js" defer></script>
+<script src="/main.js" defer></script>
 </head>
 <body class="page" data-page="server">
 
@@ -20,14 +20,14 @@
   <button class="button button-icon show-sm-only" type="button" data-drawer-open="nav-drawer" aria-label="Open navigation">
     <span class="icon" aria-hidden="true">menu</span>
   </button>
-  <a class="topbar-title brand" href="index.html">Song-DL</a>
+  <a class="topbar-title brand" href="/">Song-DL</a>
   <nav class="topnav hide-sm" aria-label="Main">
-    <a class="topnav-link" href="index.html">Browser</a>
-    <a class="topnav-link" href="server.html" aria-current="page">Server</a>
-    <a class="topnav-link" href="all.html">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/">Browser</a>
+    <a class="topnav-link" href="/server/" aria-current="page">Server</a>
+    <a class="topnav-link" href="/all/">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="topbar-actions">
-    <a class="button button-icon" href="index.html" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
+    <a class="button button-icon" href="/" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
   </div>
 </header>
 
@@ -39,12 +39,12 @@
     </button>
   </div>
   <nav class="drawer-body" aria-label="Main">
-    <a class="nav-item" href="index.html"><span class="icon" aria-hidden="true">download</span> Browser</a>
-    <a class="nav-item" href="server.html" aria-current="page"><span class="icon" aria-hidden="true">dns</span> Server</a>
-    <a class="nav-item" href="all.html"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/"><span class="icon" aria-hidden="true">download</span> Browser</a>
+    <a class="nav-item" href="/server/" aria-current="page"><span class="icon" aria-hidden="true">dns</span> Server</a>
+    <a class="nav-item" href="/all/"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
   </nav>
   <div class="drawer-footer">
-    <a class="nav-item" href="index.html" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
+    <a class="nav-item" href="/" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
   </div>
 </aside>
 
@@ -188,7 +188,7 @@
     <div class="container container-narrow">
       <div class="row justify-between">
         <h2 class="text-heading-1">Your queue</h2>
-        <a class="button button-text" href="all.html">View all <span class="icon" aria-hidden="true">arrow_forward</span></a>
+        <a class="button button-text" href="/all/">View all <span class="icon" aria-hidden="true">arrow_forward</span></a>
       </div>
       <div class="table-wrap mt-4">
         <table class="table queue-table">
