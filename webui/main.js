@@ -293,23 +293,184 @@
     });
   }
 
-  function initPanels() {
+  /* Shows the search or playlist panel. `focus` is what to focus after, or
+     null for the panel's usual first control. */
+  function showPanel(name, focus) {
     var title = $('#home-title');
+    $$('[data-panel]').forEach(function (panel) {
+      panel.hidden = panel.getAttribute('data-panel') !== name;
+    });
+    if (title) {
+      title.textContent = title.getAttribute('data-title-' + name);
+      announce(title.textContent);
+    }
+    hideResults();
+    focus = focus || (name === 'playlist' ? $('[data-panel="playlist"] .file-drop') : $('#q'));
+    if (focus) focus.focus();
+  }
+
+  function initPanels() {
     $$('[data-show-panel]').forEach(function (button) {
       button.addEventListener('click', function () {
-        var name = button.getAttribute('data-show-panel');
-        $$('[data-panel]').forEach(function (panel) {
-          panel.hidden = panel.getAttribute('data-panel') !== name;
-        });
-        if (title) {
-          title.textContent = title.getAttribute('data-title-' + name);
-          announce(title.textContent);
-        }
-        hideResults();
-        var focus = name === 'playlist' ? $('[data-panel="playlist"] .file-drop') : $('#q');
-        if (focus) focus.focus();
+        showPanel(button.getAttribute('data-show-panel'));
       });
     });
+  }
+
+  /* --------------------------------------------------- Playlist links
+     A Spotify playlist link, pasted in the song search box or the playlist
+     panel's link field, is read by the server into a CSV of the whole
+     playlist. The CSV then stands in for an uploaded file: it can be saved
+     for later, or scanned like any other. */
+
+  var SPOTIFY_PLAYLIST = /(?:\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:embed\/)?(?:user\/[^\/\s]+\/)?playlist\/|\bspotify:(?:user:[^:\s]+:)?playlist:)[A-Za-z0-9]{22}\b/;
+  var SPOTIFY_OTHER = /\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:track|album|artist|episode|show)\//;
+
+  function isPlaylistLink(text) { return SPOTIFY_PLAYLIST.test(text || ''); }
+
+  /* The playlist read from a link: { url, file, name, total, maxScan }, or null
+     when the playlist panel holds an uploaded file (or nothing). */
+  var linked = null;
+  var linkRun = 0;
+
+  /* Saves a File the page made (the playlist CSV) under its own name. */
+  function saveBlob(file) {
+    var url = URL.createObjectURL(file);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  function initPlaylistLink() {
+    var field = $('#playlist-link');
+    var list = $('#csv-list');
+    var input = $('#csv-input');
+    var zone = $('[data-panel="playlist"] .file-drop');
+    var scanButton = $('#scan-button');
+    var q = $('#q');
+    if (!field || !list || !scanButton) return;
+
+    function forgetLink() {
+      linkRun++;
+      linked = null;
+      field.value = '';
+      setIdle(scanButton);
+    }
+
+    function showReading() {
+      list.innerHTML =
+        '<div class="file-item" aria-busy="true">' +
+          '<span class="icon icon-sm">hourglass_top</span>' +
+          '<span class="grow text-truncate">Reading the playlist from Spotify…</span>' +
+        '</div>';
+    }
+
+    function showLinked() {
+      var tooBig = linked.total > linked.maxScan;
+      list.innerHTML =
+        '<div class="file-item">' +
+          '<span class="icon icon-sm">queue_music</span>' +
+          '<span class="grow text-truncate" title="' + escapeHtml(linked.name) + '">' + escapeHtml(linked.name) + '</span>' +
+          '<span class="text-caption ' + (tooBig ? 'text-warning' : 'text-muted') + '"' +
+            (tooBig ? ' title="Scans are limited to ' + linked.maxScan + ' songs at a time"' : '') + '>' +
+            linked.total + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
+          '<button class="button button-outlined button-sm" type="button" data-action="save-csv"' +
+            ' aria-label="Download ' + escapeHtml(linked.file.name) + '" title="Save the playlist as a CSV, to scan later">' +
+            '<span class="icon icon-sm">download</span> CSV</button>' +
+        '</div>';
+    }
+
+    async function read(url) {
+      var run = ++linkRun;
+      linked = null;
+      field.value = url;
+      if (input) input.value = '';
+      showReading();
+      setBusy(scanButton, 'Reading playlist');
+      announce('Reading the playlist from Spotify');
+      try {
+        var res = await api('POST', '/api/playlist-link', { url: url });
+        if (run !== linkRun) return;
+        linked = {
+          url: url,
+          file: new File([res.csv], res.filename, { type: 'text/csv' }),
+          name: res.name,
+          total: res.total,
+          maxScan: res.maxScan
+        };
+        showLinked();
+        setIdle(scanButton);
+        announce(res.name + ': ' + res.total + ' songs. Ready to scan, or download the CSV.');
+        scanButton.focus();
+      } catch (e) {
+        if (run !== linkRun) return;
+        list.innerHTML = '';
+        setIdle(scanButton);
+        toast(e.message, 'danger');
+      }
+    }
+
+    function tryLink(text, fromSearch) {
+      text = (text || '').trim();
+      if (isPlaylistLink(text)) {
+        if (fromSearch) {
+          q.value = '';
+          showPanel('playlist', scanButton);
+        }
+        if (!linked || linked.url !== text) read(text);
+        return true;
+      }
+      if (SPOTIFY_OTHER.test(text)) {
+        toast('Only playlist links work for now, not songs, albums or artists.', 'warning');
+        return true;
+      }
+      return false;
+    }
+
+    /* A link pasted (or dropped) in the song search box switches to the
+       playlist panel. Typing doesn't, since a link is never typed. */
+    if (q) {
+      q.addEventListener('paste', function () {
+        setTimeout(function () { tryLink(q.value, true); }, 0);
+      });
+      q.addEventListener('drop', function () {
+        setTimeout(function () { tryLink(q.value, true); }, 0);
+      });
+    }
+
+    field.addEventListener('paste', function () {
+      setTimeout(function () { tryLink(field.value); }, 0);
+    });
+    field.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (!field.value.trim()) return;
+      if (!tryLink(field.value)) toast('That isn\'t a Spotify playlist link.', 'warning');
+    });
+    field.addEventListener('change', function () {
+      if (isPlaylistLink(field.value)) tryLink(field.value);
+    });
+
+    /* Choosing a file replaces the link */
+    if (input) input.addEventListener('change', function () { if (input.files.length) forgetLink(); });
+    if (zone) zone.addEventListener('drop', function (event) {
+      if (event.dataTransfer && event.dataTransfer.files.length) forgetLink();
+    });
+
+    list.addEventListener('click', function (event) {
+      if (event.target.closest('[data-action="save-csv"]') && linked) {
+        saveBlob(linked.file);
+        announce('Downloading ' + linked.file.name);
+      }
+    });
+
+    /* The search form hands a link over too, for a link pasted some other way */
+    return function (query) { return tryLink(query, true); };
   }
 
   /* ------------------------------------------------------ Getting files */
@@ -522,6 +683,7 @@
       event.preventDefault();
       if (isBusy(submit)) return;
       var query = $('#q').value.trim();
+      if (handOffLink && handOffLink(query)) return;
       var formats = checkedValues('format');
       if (!formats.length) {
         toast('Pick at least one format', 'warning');
@@ -682,14 +844,19 @@
 
     button.addEventListener('click', async function () {
       if (isBusy(button)) return;
-      var file = input && input.files && input.files[0];
+      var file = linked ? linked.file : input && input.files && input.files[0];
       var formats = checkedValues('csv-format');
       if (!file) {
-        toast('Choose a playlist CSV first', 'warning');
+        toast('Choose a playlist CSV or paste a playlist link first', 'warning');
         return;
       }
       if (!formats.length) {
         toast('Pick at least one format', 'warning');
+        return;
+      }
+      if (linked && linked.total > linked.maxScan && file.size > 500 * 1024) {
+        toast('That playlist has ' + linked.total + ' songs. Scans are limited to ' + linked.maxScan +
+          ' at a time: download the CSV and split it into smaller files.', 'warning');
         return;
       }
       if (file.size > 500 * 1024) {
@@ -1187,6 +1354,7 @@
 
   initChrome();
   initPanels();
+  var handOffLink = initPlaylistLink();
   initSearch();
   initScan();
   initMyQueue();

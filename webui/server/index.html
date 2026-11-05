@@ -67,7 +67,7 @@
       <form class="search-form mt-5" id="search-form" data-panel="search" autocomplete="off">
         <div class="search search-hero">
           <span class="icon" aria-hidden="true">search</span>
-          <input type="search" id="q" name="q" placeholder="Artist | Song Title" aria-label="Song name">
+          <input type="search" id="q" name="q" placeholder="Artist | Song Title, or a playlist link" aria-label="Song name or playlist link">
         </div>
         <div class="search-form-row">
           <fieldset class="fieldset fieldset-bare">
@@ -92,6 +92,10 @@
           <span class="icon" aria-hidden="true">upload_file</span>
           <span class="text-subtitle">Drag a playlist CSV here, or click to browse</span>
           <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
+        </div>
+        <div class="search playlist-link">
+          <span class="icon" aria-hidden="true">link</span>
+          <input type="url" id="playlist-link" inputmode="url" placeholder="Or paste a Spotify playlist link" aria-label="Spotify playlist link" autocomplete="off" spellcheck="false">
         </div>
         <div class="file-list" id="csv-list"></div>
         <div class="search-form-row">

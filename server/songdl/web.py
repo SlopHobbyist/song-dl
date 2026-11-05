@@ -1,8 +1,8 @@
 """HTTP server: the JSON API used by webui/main.js, the web UI itself, and
 finished downloads.
 
-Public: the home page, searching, scanning a playlist, and fetching files to
-the browser. Behind the admin login: the Server and All pages and the queue API.
+Public: the home page, searching, reading a playlist link into a CSV, scanning
+a playlist, and fetching files to the browser. Behind the admin login: the Server and All pages and the queue API.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import jobs, matching, playlist, turnstile
+from . import jobs, matching, playlist, spotify, turnstile
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -114,6 +114,7 @@ def content_security_policy(cfg):
 
 def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
+    spotify_reader = spotify.Spotify()
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
     webui = cfg.webui_dir
@@ -240,6 +241,27 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         job = await manager.start_scan(name, formats, tracks, skipped)
         log.info('scan %s from %s: %r, %d songs (%s)', job.id, client_ip(request), name, len(tracks), ','.join(formats))
         return web.json_response({'id': job.id})
+
+    async def playlist_link(request):
+        """A Spotify playlist link -> the whole playlist as a CSV. The page offers the CSV
+        to save, and scans it through /api/scan like any uploaded file."""
+        data = await read_json(request)
+        link = str(data.get('url') or '').strip()[:2000]
+        pid = spotify.playlist_id(link)
+        if not pid:
+            raise UserError('That isn\'t a Spotify playlist link. It should look like '
+                            'https://open.spotify.com/playlist/…')
+        limit(request, 'link')
+        found = await spotify_reader.playlist(pid)
+        log.info('playlist link from %s: spotify %s, %r, %d songs', client_ip(request), pid, found.name, len(found.rows))
+        return web.json_response({
+            'name': found.name,
+            'owner': found.owner,
+            'total': len(found.rows),
+            'csv': found.csv(),
+            'filename': clean_name(found.name, None, default='playlist') + '.csv',
+            'maxScan': playlist.MAX_TRACKS,
+        })
 
     async def poll_scan(request):
         return web.json_response(find(manager.scans, request, 'playlist scan').view())
@@ -381,6 +403,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/logout', logout),
         web.post('/api/search', start_search),
         web.get('/api/search/{id}', poll_search),
+        web.post('/api/playlist-link', playlist_link),
         web.post('/api/scan', start_scan),
         web.get('/api/scan/{id}', poll_scan),
         web.delete('/api/scan/{id}', cancel_scan),
