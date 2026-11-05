@@ -161,7 +161,8 @@ class Captcha:
                 # Left unread, so it's tried again once the model is up
                 if time.monotonic() - self.unavailable_logged > UNAVAILABLE_LOG_GAP:
                     self.unavailable_logged = time.monotonic()
-                    log.warning('Can\'t read a possible captcha: the captcha model is unavailable (%s)', e)
+                    log.warning('Can\'t read a possible captcha: the captcha model is unavailable (%s). With '
+                                'Docker, start it with: docker compose --profile captcha up -d', e)
             except Exception:
                 log.exception('reading messages failed')
 

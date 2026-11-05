@@ -11,7 +11,11 @@
 #   slskd/      slskd's settings and data
 #   data/       the admin queue, remembered across restarts
 #   certs/      cert.pem and key.pem when webserver.https is on
-#   models/     the small AI model that answers uploaders' captchas (about 1 GB, downloaded on first start)
+#   models/     the small AI model that answers uploaders' captchas (about 1 GB, downloaded the first
+#               time the llm container starts)
+#
+# The captcha answerer is off by default and its llm container doesn't start. To use it, set
+# captcha.enabled: True in config.yaml and run: sudo docker compose --profile captcha up -d
 
 services:
   # Writes slskd/slskd.yml from config.yaml, then exits.
@@ -58,7 +62,9 @@ services:
 
   # Reads uploaders' messages to spot captchas (see captcha in config.yaml). CPU only. Only the app can
   # reach it. It sleeps after 10 idle minutes, leaving the model on disk instead of in memory.
+  # Only started with --profile captcha, so the model isn't downloaded unless you use it.
   llm:
+    profiles: ["captcha"]
     image: ghcr.io/ggml-org/llama.cpp:server-b11749
     command: ["-hf", "Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M", "--host", "0.0.0.0", "--port", "8080",
               "--ctx-size", "2048", "--parallel", "1", "--no-webui", "--sleep-idle-seconds", "600"]

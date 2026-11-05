@@ -42,6 +42,8 @@ see each visitor's own IP.
 Copy `./config.yaml.example` to `./config.yaml` and edit before starting for the first time.
 Make soulseek credentials, and admin credentials for the webui.
 
+Captcha solver is off by default. To turn it on, set `captcha.enabled: True` and start with `sudo docker compose --profile captcha up -d`. First start downloads a ~1 GB model into `./models`.
+
 ## Development
 
 You need `git` `docker` `python` and `pip` first.

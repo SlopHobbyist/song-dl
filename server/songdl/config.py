@@ -43,7 +43,7 @@ class Config:
     turnstile_site_key: str = ''
     turnstile_secret: str = ''
     # captcha
-    captcha: bool = True   # answer uploaders' "type download to prove you're human" messages
+    captcha: bool = False  # answer uploaders' "type download to prove you're human" messages
     llm_url: str = 'http://localhost:8081'
     # runtime locations
     data_dir: Path = Path('data')   # the server queue is remembered here across restarts
@@ -129,7 +129,7 @@ def load(path=None):
             admins=_admins(web.get('admins')),
             turnstile_site_key=site_key,
             turnstile_secret=secret,
-            captcha=bool(captcha.get('enabled', True)),
+            captcha=bool(captcha.get('enabled', False)),
             llm_url=os.environ.get('SONGDL_LLM_URL', 'http://localhost:8081').rstrip('/'),
             data_dir=_path(os.environ.get('SONGDL_DATA', 'data'), base),
             slskd_dir=_path(os.environ.get('SONGDL_SLSKD_DIR', 'slskd'), base),

@@ -134,3 +134,20 @@ def test_admin_passwords_are_checked():
     for bad in ({'a': 'short'}, {'a': 'change-me-please'}, {'': 'long-enough-1'}, ['a']):
         with pytest.raises(ConfigError):
             _admins(bad)
+
+
+def test_captcha_is_off_unless_turned_on(tmp_path):
+    from pathlib import Path
+
+    from songdl import config
+    example = (Path(__file__).resolve().parents[2] / 'config.yaml.example').read_text(encoding='utf-8')
+    example = example.replace('YourUsername', 'someone').replace('YourPassword', 'hunter2hunter2')
+    example = example.replace('admin: change-me-please', 'admin: a-real-password')
+    cases = {'example': example, 'no section': example.split('captcha:')[0],
+             'on': example.replace('enabled: False', 'enabled: True')}
+    got = {}
+    for name, text in cases.items():
+        path = tmp_path / f'{name}.yaml'
+        path.write_text(text, encoding='utf-8')
+        got[name] = config.load(path).captcha
+    assert got == {'example': False, 'no section': False, 'on': True}

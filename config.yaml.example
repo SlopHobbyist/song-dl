@@ -37,4 +37,6 @@ captcha:
   # Some uploaders hold their files until you message back a keyword, e.g. 'type "download" in this chat
   # to prove you are human'. A small AI model (the llm container) reads messages from uploaders we asked
   # for a file and sends back only that keyword. Any other message is never answered.
-  enabled: True
+  # Off by default. To turn it on, set True and start with: sudo docker compose --profile captcha up -d
+  # The model (about 1 GB) is downloaded into models/ the first time the llm container starts.
+  enabled: False
