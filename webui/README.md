@@ -7,7 +7,9 @@ This is a website that allows users to download songs.
 `/` (webui/index.html)
 For regular non logged in users.
 - Type in a song name
-- Choose any of WAV, AIFF, FLAC, MP3 (checkboxes; WAV and AIFF are on by default)
+- Choose any of WAV, AIFF, FLAC, MP3 (checkboxes; WAV is on by default)
+- Sources button: a dialog to tick where to look, tried in order: Soulseek, SoundCloud (coming soon), YouTube.
+  Remembered in the browser; scans and imports use it too
 - Press Search button
 - Shows found file info
 - Press Download button

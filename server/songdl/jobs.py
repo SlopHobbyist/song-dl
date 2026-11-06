@@ -1,6 +1,10 @@
 """Jobs the browser starts with a POST and then polls: searching for a song,
 scanning a playlist, and fetching a file to hand to the visitor.
 
+Each search or scan looks in the sources the visitor ticked, in order
+(matching.SOURCES), and stops at the first that has the song: Soulseek in
+every format asked for, then YouTube's best audio.
+
 A search or scan registers an Entry for every file it finds: the ranked list of
 copies of one song in one format. The browser downloads an Entry, or an admin
 queues it on the server (see server_queue.py), by naming its id.
@@ -55,6 +59,10 @@ class Entry:
     def best(self):
         return self.cands[0]
 
+    @property
+    def source(self):
+        return self.best.source
+
     def touch(self):
         self.used = time.monotonic()
 
@@ -73,6 +81,9 @@ class Entry:
             'size': c.size,
             'filename': f'{file_stem(self.title, self.artist)}{c.ext}',
             'warning': warning,
+            'source': c.source,
+            'from': c.username if c.source == 'youtube' else None,   # the channel
+            'link': c.url,
         }
 
 
@@ -113,16 +124,21 @@ class Job:
 class SearchJob(Job):
     """Looks for one song in every format asked for."""
 
-    def __init__(self, query, formats):
+    def __init__(self, query, formats, sources=('soulseek',), video=None):
         super().__init__()
         self.query = query
         self.formats = formats
-        self.status = 'Searching Soulseek'
+        self.sources = list(sources)
+        self.video = video   # the YouTube video the search came from, if it came from a link
+        self.status = 'Searching Soulseek' if 'soulseek' in self.sources else 'Searching YouTube'
         self.found = {}     # format -> Entry
-        self.missing = []   # formats nothing was found in
+        self.missing = []   # formats nothing was found in on Soulseek
+        self.youtube = None  # the Entry found on YouTube instead
 
     def view(self):
         results = [self.found[f].view() for f in self.formats if f in self.found]
+        if self.youtube:
+            results.append(self.youtube.view())
         first = results[0] if results else {}
         return {
             'state': self.state,
@@ -134,6 +150,7 @@ class SearchJob(Job):
             'album': first.get('album'),
             'results': results,
             'missing': [matching.LABELS[f] for f in self.formats if f in self.missing],
+            'sources': [matching.SOURCE_LABELS[s] for s in self.sources],
         }
 
 
@@ -149,6 +166,8 @@ class ScanTrack:
         for entry in self.found.values():
             entry.touch()   # kept while the scan is on screen, however long it took
         results = [self.found[f].view() for f in formats if f in self.found]
+        if 'youtube' in self.found:
+            results.append(self.found['youtube'].view())
         return {
             'title': self.track.title,
             'artist': self.track.artist,
@@ -161,10 +180,11 @@ class ScanTrack:
 class ScanJob(Job):
     """Looks for every song of a playlist, in every format asked for."""
 
-    def __init__(self, name, formats, tracks, skipped):
+    def __init__(self, name, formats, tracks, skipped, sources=('soulseek',)):
         super().__init__()
         self.name = name
         self.formats = formats
+        self.sources = list(sources)
         self.tracks = [ScanTrack(t) for t in tracks]
         self.skipped = skipped
         self.polled = time.monotonic()
@@ -177,6 +197,7 @@ class ScanJob(Job):
             'error': self.error,
             'name': self.name,
             'formats': [matching.LABELS[f] for f in self.formats],
+            'sources': [matching.SOURCE_LABELS[s] for s in self.sources],
             'skipped': self.skipped,
             'total': len(self.tracks),
             'scanned': sum(t.state in ('found', 'missing') for t in self.tracks),
@@ -258,9 +279,10 @@ class Manager:
 
     # Search
 
-    async def start_search(self, query, formats):
-        await self.engine.check_connected()
-        job = SearchJob(query, formats)
+    async def start_search(self, query, formats, sources=('soulseek',), video=None):
+        if 'soulseek' in sources:
+            await self.engine.check_connected()
+        job = SearchJob(query, formats, sources, video)
         self.searches[job.id] = job
         self.engine.spawn(job.guard(self._search(job)))
         return job
@@ -269,26 +291,35 @@ class Manager:
         def status(text):
             job.status = text
 
-        rankings = await asyncio.gather(*(self.engine.search(job.query, f, status) for f in job.formats))
-        for fmt, ranking in zip(job.formats, rankings):
-            if not ranking.candidates:
-                job.missing.append(fmt)
-                continue
-            best = ranking.candidates[0]
-            meta = best.meta or {}
-            job.found[fmt] = self._register(
-                ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
-                meta.get('artist') or '', meta.get('album') or '')
+        if 'soulseek' in job.sources:
+            rankings = await asyncio.gather(*(self.engine.search(job.query, f, status) for f in job.formats))
+            for fmt, ranking in zip(job.formats, rankings):
+                if not ranking.candidates:
+                    job.missing.append(fmt)
+                    continue
+                best = ranking.candidates[0]
+                meta = best.meta or {}
+                job.found[fmt] = self._register(
+                    ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
+                    meta.get('artist') or '', meta.get('album') or '')
+        if not job.found and 'youtube' in job.sources:
+            job.status = 'Not on Soulseek. Searching YouTube' if 'soulseek' in job.sources else 'Searching YouTube'
+            cands = await self.engine.youtube.find(job.query, video=job.video)
+            if cands:
+                meta = cands[0].meta
+                job.youtube = self._register(cands, cands[0].fmt, meta.get('title') or job.query,
+                                             meta.get('artist') or '', meta.get('album') or '')
         job.status = 'Done'
         job.finish()
 
     # Playlist scan
 
-    async def start_scan(self, name, formats, tracks, skipped=0):
-        await self.engine.check_connected()
+    async def start_scan(self, name, formats, tracks, skipped=0, sources=('soulseek',)):
+        if 'soulseek' in sources:
+            await self.engine.check_connected()
         if sum(j.state == 'running' for j in self.scans.values()) >= MAX_SCANS:
             raise UserError('Song-DL is busy scanning other playlists right now. Please try again in a few minutes.', 503)
-        job = ScanJob(name, formats, tracks, skipped)
+        job = ScanJob(name, formats, tracks, skipped, sources)
         self.scans[job.id] = job
         job.tasks = [self.engine.spawn(self._scan_track(job, t)) for t in job.tracks]
         self.engine.spawn(job.guard(self._scan(job)))
@@ -319,7 +350,23 @@ class Manager:
                     return
                 st.found[fmt] = self._register(cands, fmt, st.track.title, st.track.artist, st.track.album)
 
-        await asyncio.gather(*(one(f) for f in job.formats))
+        if 'soulseek' in job.sources:
+            await asyncio.gather(*(one(f) for f in job.formats))
+        if not st.found and 'youtube' in job.sources:
+            st.state = 'searching'
+            try:
+                cands = await self.engine.find_on_youtube(st.track)
+            except UserError as e:
+                log.info('youtube search for %r failed: %s', st.track.label, e)
+                cands = []
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception('youtube search for %r crashed', st.track.label)
+                cands = []
+            if cands:
+                st.found['youtube'] = self._register(cands, cands[0].fmt, st.track.title, st.track.artist,
+                                                     st.track.album)
         st.state = 'found' if st.found else 'missing'
         job.updated = time.monotonic()
 
@@ -329,7 +376,8 @@ class Manager:
         entry = self.entry(entry_id)
         if sum(j.state == 'running' and j.ip == ip for j in self.downloads.values()) >= MAX_DOWNLOADS_PER_IP:
             raise UserError('You already have a lot of downloads going. Please wait for some to finish.', 429)
-        await self.engine.check_connected()
+        if entry.source == 'soulseek':
+            await self.engine.check_connected()
         if self.engine.low_disk():
             raise UserError(LOW_DISK, 507)
         job = DownloadJob(entry, ip)

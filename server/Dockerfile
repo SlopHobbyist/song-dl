@@ -5,6 +5,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# YouTube downloads: yt-dlp needs a JavaScript runtime to read YouTube's formats, and ffmpeg
+# to take the audio out of its video container and tag it
+COPY --from=denoland/deno:bin-2.9.7 /deno /usr/local/bin/deno
+COPY --from=mwader/static-ffmpeg:9.0.2 /ffmpeg /ffprobe /usr/local/bin/
+ENV DENO_DIR=/tmp/deno
+
 WORKDIR /srv
 COPY server/requirements.txt .
 RUN pip install -r requirements.txt

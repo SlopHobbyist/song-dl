@@ -6,7 +6,7 @@ A simple web interface for downloading music off of Soulseek.
 
 ## About
 
-This is a website for downloading music. It grabs songs from the Soulseek network using Slskd. Type a song name, and it'll find the highest quality version available. Using CSV files, or by pasting a Spotify or YouTube playlist link, you can download playlists too. If you have a NAS, Admins can choose to download to the server instead.
+This is a website for downloading music. It grabs songs from the Soulseek network using Slskd. Type a song name, and it'll find the highest quality version available. If Soulseek doesn't have it, it can fall back to the best audio on YouTube. Using CSV files, or by pasting a Spotify or YouTube playlist link, you can download playlists too. If you have a NAS, Admins can choose to download to the server instead.
 
 ## Differentiators
 
@@ -15,10 +15,12 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 - Auto retries a different uploader if slow or stuck
 - Optional captcha solver for direct messages
 - Can paste Spotify and YouTube links to grab song lists automatically
+- Falls back to YouTube when Soulseek doesn't have a song (pick where to look under **Sources**)
 
 ### Limitations
 - Soulseek limits searches to 34 every 220 seconds. Some stuff may take a while.
-- If youtube scanning breaks, do `docker compose build --pull --no-cache app` to force `yt-dlp` to update.
+- If youtube scanning or downloading breaks, do `docker compose build --pull --no-cache app` to force `yt-dlp` to update.
+- YouTube audio is lossy (usually Opus around 130 kbps, sometimes AAC in `.m4a`) and is never converted, whatever formats are ticked. Some DJ software can't play Opus.
 
 ## Page List
 

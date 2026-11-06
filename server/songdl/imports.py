@@ -6,6 +6,9 @@ for a few hundred songs. An import is for thousands: it doesn't need a page
 open, it is written to disk and carries on after a restart, and the songs it
 finds go straight into the server queue, so nothing it found can expire.
 
+A song Soulseek doesn't have is looked for on YouTube next, when the admin
+ticked it (see youtube_audio.py), and its best audio is queued instead.
+
 It is slow on purpose. Soulseek bans clients that search too fast, so every
 search waits its turn in the engine's SearchLimiter, behind visitors' searches
 and scans. Expect about 9 searches a minute: one per song and format, and a
@@ -26,6 +29,7 @@ import time
 from .engine import IMPORT, SEARCH_WINDOW, SEARCHES_PER_WINDOW, Engine
 from .errors import UserError
 from .jobs import Entry
+from .matching import SOURCE_LABELS
 from .playlist import Track
 from .server_queue import ServerQueue, normalize_folder
 from .slskd import SlskdError
@@ -62,10 +66,11 @@ class ImportTrack:
 
 
 class Import:
-    def __init__(self, name, formats, folder, by, tracks, skipped=0):
+    def __init__(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',)):
         self.id = secrets.token_urlsafe(9)
         self.name = name
         self.formats = formats
+        self.sources = list(sources)
         self.folder = folder
         self.by = by
         self.tracks = tracks           # [ImportTrack]
@@ -110,7 +115,8 @@ class Import:
         return {
             'id': self.id,
             'name': self.name,
-            'formats': [f.upper() for f in self.formats],
+            'formats': [f.upper() for f in self.formats] if 'soulseek' in self.sources else [],
+            'sources': [SOURCE_LABELS[s] for s in self.sources],
             'folder': self.folder + '/' if self.folder else '',
             'by': self.by,
             'state': self.state,
@@ -140,14 +146,16 @@ class Import:
         return '﻿' + out.getvalue()
 
     def to_dict(self):
-        return {'id': self.id, 'name': self.name, 'formats': self.formats, 'folder': self.folder, 'by': self.by,
+        return {'id': self.id, 'name': self.name, 'formats': self.formats, 'sources': self.sources,
+                'folder': self.folder, 'by': self.by,
                 'state': self.state, 'note': self.note, 'created': self.created, 'finished': self.finished,
                 'skipped': self.skipped, 'tracks': [t.to_list() for t in self.tracks]}
 
     @classmethod
     def from_dict(cls, d):
         imp = cls(d['name'], d['formats'], d['folder'], d['by'],
-                  [ImportTrack.from_list(r) for r in d['tracks']], d.get('skipped', 0))
+                  [ImportTrack.from_list(r) for r in d['tracks']], d.get('skipped', 0),
+                  d.get('sources') or ('soulseek',))
         imp.id, imp.state, imp.note = d['id'], d['state'], d.get('note') or ''
         imp.created, imp.finished = d['created'], d.get('finished')
         return imp
@@ -167,18 +175,19 @@ class Importer:
 
     # Adding and controlling
 
-    def add(self, name, formats, folder, by, tracks, skipped=0):
+    def add(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',)):
         folder = normalize_folder(folder)
         self.queue.dest_dir(folder)   # refuses anything that would leave the downloads folder
         if len(tracks) > MAX_TRACKS:
             raise UserError(f'That playlist has {len(tracks)} songs. An import can have up to {MAX_TRACKS}.')
         if sum(i.state in ('running', 'paused') for i in self.imports.values()) >= MAX_IMPORTS:
             raise UserError('There are too many imports going. Let some finish or delete them first.', 409)
-        imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped)
+        imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped, sources)
         self.imports[imp.id] = imp
         self._trim()
         self._changed()
-        log.info('%s imported %r: %d songs into %r (%s)', by, name, len(tracks), folder, ','.join(formats))
+        log.info('%s imported %r: %d songs into %r (%s; %s)', by, name, len(tracks), folder, ','.join(formats),
+                 ','.join(sources))
         return imp
 
     def get(self, import_id):
@@ -262,9 +271,12 @@ class Importer:
         running = [i for i in self.imports.values() if i.state == 'running']
         if not running:
             return
-        if not await self.engine.connected():
+        # Soulseek being away only holds up imports that search it
+        if any('soulseek' in i.sources for i in running) and not await self.engine.connected():
             self.offline_until = time.monotonic() + RETRY_SECONDS
-            return
+            running = [i for i in running if 'soulseek' not in i.sources]
+            if not running:
+                return
         # Oldest import first; a newer one gets the slots the older one can't use
         for imp in running:
             # (It may have been paused while the connection was checked)
@@ -289,7 +301,7 @@ class Importer:
 
     async def _search(self, imp: Import, t: ImportTrack):
         try:
-            for fmt in imp.formats:
+            for fmt in imp.formats if 'soulseek' in imp.sources else ():
                 if fmt in t.found:
                     continue
                 try:
@@ -309,6 +321,9 @@ class Importer:
                     log.warning('import %r paused: %s', imp.name, e)
                     return
                 t.found.append(fmt)
+            if not t.found and 'youtube' in imp.sources:
+                if not await self._youtube(imp, t):
+                    return
             t.state = 'found' if t.found else 'missing'
             t.note = ''
             imp.run_done += 1
@@ -324,6 +339,27 @@ class Importer:
             t.state, t.note = 'missing', 'Something went wrong searching for this song'
         finally:
             self._changed()
+
+    async def _youtube(self, imp: Import, t: ImportTrack):
+        """Queues the song's best audio from YouTube, if YouTube has it. False when the import had to stop."""
+        try:
+            cands = await self.engine.find_on_youtube(t.track)
+        except UserError as e:
+            log.info('import: youtube search for %r failed: %s', t.track.label, e)
+            return True
+        if not cands:
+            return True
+        entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album)
+        try:
+            self.queue.add([entry], imp.folder, imp.by)
+        except UserError as e:
+            imp.state, imp.note = 'paused', str(e)
+            t.state = 'pending'
+            imp.next = 0
+            log.warning('import %r paused: %s', imp.name, e)
+            return False
+        t.found.append('youtube')
+        return True
 
     def _retry_later(self, imp, t):
         t.state = 'pending'

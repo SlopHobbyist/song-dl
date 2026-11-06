@@ -21,9 +21,13 @@ from dataclasses import dataclass, field
 from . import meta
 
 FORMATS = ('wav', 'aiff', 'flac', 'mp3')   # the order the site lists them in
-EXTENSIONS = {'wav': ('.wav',), 'aiff': ('.aiff', '.aif'), 'flac': ('.flac',), 'mp3': ('.mp3',)}
-LABELS = {'wav': 'WAV', 'aiff': 'AIFF', 'flac': 'FLAC', 'mp3': 'MP3'}
-LOSSY = {'mp3'}
+# ...and the formats YouTube's audio comes in (see youtube_audio.py), which nobody picks
+EXTENSIONS = {'wav': ('.wav',), 'aiff': ('.aiff', '.aif'), 'flac': ('.flac',), 'mp3': ('.mp3',),
+              'opus': ('.opus',), 'm4a': ('.m4a',), 'ogg': ('.ogg',)}
+LABELS = {'wav': 'WAV', 'aiff': 'AIFF', 'flac': 'FLAC', 'mp3': 'MP3', 'opus': 'Opus', 'm4a': 'M4A', 'ogg': 'OGG'}
+LOSSY = {'mp3', 'opus', 'm4a', 'ogg'}
+SOURCES = ('soulseek', 'soundcloud', 'youtube')   # where to look, in the order they're tried
+SOURCE_LABELS = {'soulseek': 'Soulseek', 'soundcloud': 'SoundCloud', 'youtube': 'YouTube'}
 
 # Words that mark a different version of a song than the one usually wanted.
 VARIANT_WORDS = {
@@ -68,6 +72,13 @@ class Candidate:
     variant: bool = False
     outlier: bool = False
     meta: dict = field(default_factory=dict)
+    source: str = 'soulseek'     # or 'youtube': username is then the channel, and url the video
+    url: str | None = None
+
+    @property
+    def key(self):
+        """Which remote file this is, so two downloads of it share one fetch."""
+        return (self.source, self.url) if self.url else (self.username, self.filename)
 
     @property
     def basename(self):
@@ -140,6 +151,7 @@ class Candidate:
             'bit_depth': self.bit_depth, 'sample_rate': self.sample_rate, 'free_slot': self.free_slot,
             'queue': self.queue, 'speed': self.speed, 'fmt': self.fmt, 'bitrate': self.bitrate,
             'vbr': self.vbr, 'variant': self.variant, 'outlier': self.outlier, 'meta': self.meta,
+            'source': self.source, 'url': self.url,
         }
 
     @classmethod

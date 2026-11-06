@@ -111,6 +111,41 @@ def parse_formats(raw):
     return [f for f in matching.FORMATS if f in chosen]
 
 
+# Sources the site can look in so far; SoundCloud is still to come
+AVAILABLE_SOURCES = ('soulseek', 'youtube')
+
+
+def parse_sources(raw):
+    """["soulseek", "youtube"] or "soulseek,youtube" -> where to look, in the order they're tried.
+    Left out, only Soulseek."""
+    if raw is None or raw == '':
+        return ['soulseek']
+    if isinstance(raw, str):
+        raw = raw.split(',')
+    if not isinstance(raw, list):
+        raise UserError('Pick at least one place to look.')
+    chosen = {str(s).strip().lower() for s in raw} - {''}
+    if not chosen:
+        raise UserError('Pick at least one place to look.')
+    if chosen - set(matching.SOURCES):
+        raise UserError('Pick Soulseek or YouTube.')
+    if chosen - set(AVAILABLE_SOURCES):
+        raise UserError('SoundCloud isn\'t available yet.')
+    return [s for s in matching.SOURCES if s in chosen]
+
+
+def parse_search_formats(raw, sources):
+    """The formats to search Soulseek in; none are needed when Soulseek isn't searched."""
+    if 'soulseek' not in sources and not raw:
+        return []
+    try:
+        return parse_formats(raw)
+    except UserError:
+        if 'soulseek' in sources:
+            raise
+        return []
+
+
 def content_security_policy(cfg):
     cloudflare = ' https://challenges.cloudflare.com' if cfg.turnstile_site_key else ''
     frames = cloudflare or " 'none'"
@@ -221,15 +256,18 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     async def start_search(request):
         data = await read_json(request)
         query = ' '.join(str(data.get('query') or '').split())
-        formats = parse_formats(data.get('formats'))
+        sources = parse_sources(data.get('sources'))
+        formats = parse_search_formats(data.get('formats'), sources)
+        video = youtube.video_id(f'https://youtu.be/{data["video"]}') if isinstance(data.get('video'), str) else None
         if len(query) > MAX_QUERY:
             raise UserError(f'That search is too long. Keep it under {MAX_QUERY} characters.')
         words = [w for w in matching.tokens(query) if w not in matching.FORMATS]
         if not words or sum(map(len, words)) < 3:
             raise UserError('Type a little more of the song name.')
         limit(request, 'search')
-        job = await manager.start_search(query, formats)
-        log.info('search %s from %s: %r (%s)', job.id, client_ip(request), query, ','.join(formats))
+        job = await manager.start_search(query, formats, sources, video)
+        log.info('search %s from %s: %r (%s; %s)', job.id, client_ip(request), query, ','.join(formats),
+                 ','.join(sources))
         return web.json_response({'id': job.id})
 
     def find(table, request, what):
@@ -244,15 +282,17 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     async def start_scan(request):
         if (request.content_length or 0) > MAX_UPLOAD:
             raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
-        formats = parse_formats(request.query.get('formats', ''))
+        sources = parse_sources(request.query.get('sources'))
+        formats = parse_search_formats(request.query.get('formats', ''), sources)
         limit(request, 'scan')
         raw = await request.read()
         if len(raw) > MAX_UPLOAD:
             raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
         tracks, skipped = playlist.parse(raw)
         name = ' '.join(request.query.get('name', '').split())[:80] or 'your playlist'
-        job = await manager.start_scan(name, formats, tracks, skipped)
-        log.info('scan %s from %s: %r, %d songs (%s)', job.id, client_ip(request), name, len(tracks), ','.join(formats))
+        job = await manager.start_scan(name, formats, tracks, skipped, sources)
+        log.info('scan %s from %s: %r, %d songs (%s; %s)', job.id, client_ip(request), name, len(tracks),
+                 ','.join(formats), ','.join(sources))
         return web.json_response({'id': job.id})
 
     async def playlist_link(request):
@@ -292,7 +332,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         limit(request, 'link')
         found = await youtube.video(vid)
         query = playlist.Track(found.song, found.artist).query[:MAX_QUERY].strip()
-        return web.json_response({'query': query or found.title[:MAX_QUERY], 'artist': found.artist,
+        return web.json_response({'query': query or found.title[:MAX_QUERY], 'video': vid, 'artist': found.artist,
                                   'song': found.song, 'title': found.title, 'channel': found.channel})
 
     async def poll_scan(request):
@@ -406,7 +446,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         if not isinstance(ids, list) or not ids or len(ids) > MAX_FILES:
             raise UserError('Nothing to queue.')
         entries = [manager.entry(i) for i in ids]
-        await manager.engine.check_connected()
+        if any(e.source == 'soulseek' for e in entries):
+            await manager.engine.check_connected()
         queued, skipped = queue.add(entries, data.get('folder'), user)
         log.info('%s queued %d song(s) in %r', user, queued, data.get('folder'))
         return web.json_response({'queued': queued, 'skipped': skipped})
@@ -440,13 +481,14 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         text = data.get('csv')
         if not isinstance(text, str) or not text.strip():
             raise UserError('Choose a playlist CSV or paste a playlist link first.')
-        formats = parse_formats(data.get('formats'))
+        sources = parse_sources(data.get('sources'))
+        formats = parse_search_formats(data.get('formats'), sources)
         tracks, skipped = playlist.parse(
             text.encode('utf-8'), imports.MAX_TRACKS,
             'That playlist has {n} songs. An import can have up to {limit}; split it into smaller files.')
         name = ' '.join(str(data.get('name') or '').split())[:120]
         name = re.sub(r'\.csv$', '', name, flags=re.I) or 'Playlist'
-        imp = importer.add(name, formats, data.get('folder'), user, tracks, skipped)
+        imp = importer.add(name, formats, data.get('folder'), user, tracks, skipped, sources)
         return web.json_response(imp.view())
 
     async def list_imports(request):

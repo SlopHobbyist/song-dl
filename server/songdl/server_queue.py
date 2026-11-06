@@ -77,12 +77,17 @@ class QueueItem:
     def label(self):
         return f'{self.artist} - {self.title}' if self.artist else self.title
 
+    @property
+    def source(self):
+        return self.cands[0].source if self.cands else 'soulseek'
+
     def view(self):
         return {
             'id': self.id,
             'title': self.title,
             'artist': self.artist,
             'format': matching.LABELS[self.format],
+            'source': self.source,
             'folder': self.folder + '/' if self.folder else '',
             'by': self.by,
             'status': self.status,
@@ -260,8 +265,9 @@ class ServerQueue:
         waiting = [i for i in self.items.values() if i.status == 'queued']
         if not waiting or running >= SLOTS:
             return
-        if not await self.engine.connected():
-            return
+        # Songs from YouTube don't need Soulseek, so they still go while it's away
+        if any(i.source == 'soulseek' for i in waiting) and not await self.engine.connected():
+            waiting = [i for i in waiting if i.source != 'soulseek']
         for item in waiting[:SLOTS - running]:
             item.status, item.progress, item.speed, item.note = 'downloading', 0.0, None, 'Starting'
             task = self.engine.spawn(self._run(item))

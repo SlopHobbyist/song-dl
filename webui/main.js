@@ -267,6 +267,65 @@
     $$('.badge-count, .nav-item-trailing').forEach(function (el) { setText(el, count); });
   }
 
+  /* ------------------------------------------------------------ Sources
+     Where to look for a song, in order: Soulseek, then SoundCloud (still to
+     come), then YouTube. Ticked in the Sources dialog, remembered in this
+     browser, and used by searches, scans and imports alike. */
+
+  var SOURCE_NAMES = { soulseek: 'Soulseek', soundcloud: 'SoundCloud', youtube: 'YouTube' };
+  var DEFAULT_SOURCES = ['soulseek', 'youtube'];
+
+  /* The ticked sources, in the order they're tried. */
+  function chosenSources() {
+    var boxes = $$('input[name="source"]');
+    if (!boxes.length) return DEFAULT_SOURCES.slice();
+    return boxes.filter(function (box) { return box.checked && !box.disabled; })
+      .map(function (box) { return box.value; });
+  }
+
+  function usesSoulseek() { return chosenSources().indexOf('soulseek') > -1; }
+
+  function initSources() {
+    var boxes = $$('input[name="source"]');
+    if (!boxes.length) return;
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('songdl-sources') || 'null'); } catch (e) {}
+    if (Array.isArray(saved) && saved.length) {
+      boxes.forEach(function (box) { if (!box.disabled) box.checked = saved.indexOf(box.value) > -1; });
+    }
+    if (!chosenSources().length) {
+      boxes.forEach(function (box) { if (!box.disabled) box.checked = DEFAULT_SOURCES.indexOf(box.value) > -1; });
+    }
+
+    function apply() {
+      var names = chosenSources().map(function (name) { return SOURCE_NAMES[name]; });
+      $$('[data-sources-button]').forEach(function (button) {
+        button.title = 'Looks on ' + names.join(', then ');
+        button.setAttribute('aria-label', 'Sources: ' + names.join(', then '));
+      });
+      /* The formats only choose what to get from Soulseek */
+      var soulseek = usesSoulseek();
+      $$('input[name="format"], input[name="csv-format"]').forEach(function (input) {
+        var fieldset = input.closest('fieldset');
+        if (!fieldset) return;
+        fieldset.disabled = !soulseek;
+        fieldset.title = soulseek ? '' : 'Formats are for Soulseek, which is turned off in Sources';
+      });
+    }
+
+    boxes.forEach(function (box) {
+      box.addEventListener('change', function () {
+        if (!chosenSources().length) {
+          box.checked = true;
+          toast('Pick at least one place to look', 'warning');
+        }
+        try { localStorage.setItem('songdl-sources', JSON.stringify(chosenSources())); } catch (e) {}
+        apply();
+      });
+    });
+    apply();
+  }
+
   /* ------------------------------------------- Search / playlist switch */
 
   /* A search or scan that is polling stops as soon as its run number changes. */
@@ -339,6 +398,9 @@
      when the playlist panel holds an uploaded file (or nothing). */
   var linked = null;
   var linkRun = 0;
+  /* The YouTube video a search came from: { query, id }. If Soulseek doesn't have
+     the song, YouTube's fallback takes this video instead of searching. */
+  var videoHint = null;
 
   /* Saves a File the page made (the playlist CSV) under its own name. */
   function saveBlob(file) {
@@ -457,6 +519,7 @@
         setIdle(submit);
         if (q.value.trim() !== url) return;   // typed over while it was read
         q.value = res.query;
+        videoHint = res.video ? { query: res.query, id: res.video } : null;
         form.requestSubmit();
       } catch (e) {
         setIdle(submit);
@@ -708,11 +771,19 @@
       bind('size', formatSize(sumSizes(found)));
       bind('filename', found.map(function (r) { return r.filename; }).join(', '));
       bind('dest', serverRoot + subfolder());
+      var youtube = found[0].source === 'youtube';
+      var from = $('[data-bind-source]', result);
+      if (youtube) {
+        from.innerHTML = 'YouTube · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
+          ' title="Open the video on YouTube">' + escapeHtml(found[0].from || 'the video') + '</a>';
+      } else {
+        from.textContent = 'Soulseek';
+      }
 
       /* Formats that weren't found, and copies that may be another version */
       var tags = $('.row.row-tight', result);
       $$('.result-extra', tags).forEach(function (tag) { tag.remove(); });
-      var notes = job.missing.map(function (f) { return 'No ' + f; });
+      var notes = youtube && job.missing.length ? ['Not on Soulseek'] : job.missing.map(function (f) { return 'No ' + f; });
       found.forEach(function (r) {
         if (r.warning && notes.indexOf(r.warning) < 0) notes.push(r.warning);
       });
@@ -725,15 +796,26 @@
       hideFetch($('[data-fetch-status]', result));
       result.hidden = false;
       var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
-        found.map(function (r) { return r.format; }).join(' and ') + '.' +
-        (job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
+        found.map(function (r) { return r.format; }).join(' and ') + (youtube ? ' from YouTube.' : '.') +
+        (job.missing.length ? (youtube ? ' Not on Soulseek as ' : ' Not found: ') + job.missing.join(', ') + '.' : '');
       announce(message);
     }
 
     function showEmpty(job) {
       var what = job.missing.join(', ');
-      setText($('[data-bind="message"]', empty),
-        'Nobody on Soulseek is sharing ' + what + ' files matching that. Soulseek blocks searches for some artists, so try just the song title.');
+      var soulseek = job.sources.indexOf('Soulseek') > -1;
+      var youtube = job.sources.indexOf('YouTube') > -1;
+      var message;
+      if (soulseek && youtube) {
+        message = 'Nobody on Soulseek is sharing ' + what + ' files matching that, and YouTube had nothing either. ' +
+          'Try just the song title, or check the spelling.';
+      } else if (soulseek) {
+        message = 'Nobody on Soulseek is sharing ' + what + ' files matching that. Soulseek blocks searches for some ' +
+          'artists, so try just the song title, or turn on YouTube in Sources.';
+      } else {
+        message = 'YouTube had nothing matching that. Try just the song title, or check the spelling.';
+      }
+      setText($('[data-bind="message"]', empty), message);
       empty.hidden = false;
       announce('No match found for ' + job.query);
     }
@@ -744,7 +826,11 @@
       var query = $('#q').value.trim();
       if (handOffLink && handOffLink(query)) return;
       var formats = checkedValues('format');
-      if (!formats.length) {
+      var sources = chosenSources();
+      var soulseek = sources.indexOf('soulseek') > -1;
+      var video = videoHint && videoHint.query === query ? videoHint.id : null;
+      videoHint = null;
+      if (soulseek && !formats.length) {
         toast('Pick at least one format', 'warning');
         return;
       }
@@ -757,17 +843,20 @@
       hideResults();
       var run = runs.search;
       setBusy(submit, 'Searching');
-      status.textContent = 'Searching Soulseek';
+      var searching = soulseek ? 'Searching Soulseek' : 'Searching YouTube';
+      status.textContent = searching;
       loading.hidden = false;
       announce('Searching for ' + query);
       try {
-        var started = await api('POST', '/api/search', { query: query, formats: formats });
+        var body = { query: query, formats: formats, sources: sources };
+        if (video) body.video = video;
+        var started = await api('POST', '/api/search', body);
         var job;
         for (;;) {
           await sleep(1000);
           job = await api('GET', '/api/search/' + started.id);
           if (run !== runs.search) return;
-          status.textContent = job.status || 'Searching Soulseek';
+          status.textContent = job.status || searching;
           if (job.state !== 'running') break;
         }
         loading.hidden = true;
@@ -834,8 +923,17 @@
     pending: '<span class="tag">Waiting</span>',
     searching: '<span class="tag tag-info">Searching</span>',
     found: '<span class="tag tag-success">Found</span>',
+    youtube: '<span class="tag tag-success" title="Not on Soulseek, so the best audio from YouTube">YouTube</span>',
     missing: '<span class="tag tag-danger">Not found</span>'
   };
+
+  function fromYouTube(song) {
+    return song.results.length > 0 && song.results[0].source === 'youtube';
+  }
+
+  function scanTag(song) {
+    return SCAN_TAGS[song.state === 'found' && fromYouTube(song) ? 'youtube' : song.state];
+  }
 
   function initScan() {
     var button = $('#scan-button');
@@ -869,11 +967,11 @@
     function updateRows(job) {
       job.tracks.forEach(function (song, i) {
         var row = rows.children[i];
-        var signature = song.state + ':' + song.results.length;
+        var signature = song.state + ':' + song.results.length + ':' + fromYouTube(song);
         if (!row || row.getAttribute('data-state') === signature) return;
         row.setAttribute('data-state', signature);
         row.classList.toggle('is-missing', song.state === 'missing');
-        $('.cell-status', row).innerHTML = SCAN_TAGS[song.state];
+        $('.cell-status', row).innerHTML = scanTag(song);
         setText($('.cell-size', row), song.size ? formatSize(song.size) : '—');
         $('[data-action]', row).disabled = song.state !== 'found';
       });
@@ -883,9 +981,11 @@
       var found = job.tracks.filter(function (t) { return t.state === 'found'; }).length;
       var missing = job.tracks.filter(function (t) { return t.state === 'missing'; }).length;
       var left = job.total - found - missing;
-      var parts = ['<strong class="text-success">' + found + ' found</strong>', missing + ' not found'];
+      var youtube = job.tracks.filter(function (t) { return t.state === 'found' && fromYouTube(t); }).length;
+      var parts = ['<strong class="text-success">' + found + ' found</strong>' + (youtube ? ' (' + youtube + ' on YouTube)' : ''),
+        missing + ' not found'];
       if (job.state === 'running') parts.push(left + ' left to scan');
-      parts.push(escapeHtml(job.formats.join(' + ')));
+      parts.push(escapeHtml(lookedFor(job.formats, job.sources)));
       if (job.skipped) parts.push(job.skipped + ' row' + (job.skipped === 1 ? '' : 's') + ' without a song name skipped');
       if (server) parts.push('<span class="text-mono">' + escapeHtml(serverRoot + subfolder()) + '</span>');
       $('[data-scan-summary]', results).innerHTML = parts.join(' · ');
@@ -905,11 +1005,12 @@
       if (isBusy(button)) return;
       var file = chosenPlaylist();
       var formats = checkedValues('csv-format');
+      var sources = chosenSources();
       if (!file) {
         toast('Choose a playlist CSV or paste a playlist link first', 'warning');
         return;
       }
-      if (!formats.length) {
+      if (usesSoulseek() && !formats.length) {
         toast('Pick at least one format', 'warning');
         return;
       }
@@ -929,7 +1030,8 @@
       announce('Scanning playlist');
       try {
         var started = await api('POST', '/api/scan?name=' + encodeURIComponent(file.name) +
-          '&formats=' + encodeURIComponent(formats.join(',')), undefined, await file.arrayBuffer());
+          '&formats=' + encodeURIComponent(formats.join(',')) + '&sources=' + encodeURIComponent(sources.join(',')),
+          undefined, await file.arrayBuffer());
         if (run !== runs.scan) return;
         runs.scanJob = started.id;
         scan = { id: started.id, job: null };
@@ -1013,7 +1115,7 @@
                   escapeHtml(summary.progress !== null ? 'Downloading ' + summary.short : summary.short) + '</span>';
               }), label);
             } finally {
-              statusCell.innerHTML = SCAN_TAGS.found;
+              statusCell.innerHTML = scanTag(song);
               target.title = target.getAttribute('aria-label');
             }
           } else {
@@ -1075,6 +1177,15 @@
 
   var refreshImports = null;   // set by initImports, so a new import shows at once
 
+  /* "WAV + FLAC", "WAV + FLAC, else YouTube" or "YouTube": what a scan or import looks for. */
+  function lookedFor(formats, sources) {
+    var youtube = (sources || []).indexOf('YouTube') > -1;
+    var soulseek = !sources || sources.indexOf('Soulseek') > -1;
+    var text = soulseek ? formats.join(' + ') : '';
+    if (youtube) text += text ? ', else YouTube' : 'YouTube';
+    return text;
+  }
+
   function initImportButton() {
     var button = $('#import-button');
     if (!button) return;
@@ -1086,7 +1197,7 @@
         toast('Choose a playlist CSV or paste a playlist link first', 'warning');
         return;
       }
-      if (!formats.length) {
+      if (usesSoulseek() && !formats.length) {
         toast('Pick at least one format', 'warning');
         return;
       }
@@ -1100,6 +1211,7 @@
           csv: await file.text(),
           name: linked ? linked.name : file.name,
           formats: formats,
+          sources: chosenSources(),
           folder: $('#subfolder') ? $('#subfolder').value : ''
         });
         toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder, 'success');
@@ -1159,7 +1271,7 @@
   function updateImport(el, imp) {
     setText($('[data-name]', el), imp.name);
     $('[data-name]', el).title = imp.name;
-    setText($('[data-where]', el), imp.formats.join(' + ') + ' · ' + serverRoot + imp.folder + ' · by ' + imp.by);
+    setText($('[data-where]', el), lookedFor(imp.formats, imp.sources) + ' · ' + serverRoot + imp.folder + ' · by ' + imp.by);
 
     var signature = imp.state + '|' + imp.missing + '|' + imp.queued + '|' + imp.found;
     if (el.getAttribute('data-signature') !== signature) {
@@ -1608,6 +1720,7 @@
   }
 
   initChrome();
+  initSources();
   initPanels();
   var handOffLink = initPlaylistLink();
   initSearch();
