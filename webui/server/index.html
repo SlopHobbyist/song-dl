@@ -70,16 +70,8 @@
           <input type="search" id="q" name="q" placeholder="Artist + Song (or Link)" aria-label="Song name, or a playlist or YouTube link">
         </div>
         <div class="search-form-row">
-          <fieldset class="fieldset fieldset-bare">
-            <legend class="visually-hidden">Download formats</legend>
-            <div class="choice-group choice-group-row">
-              <label class="choice"><input type="checkbox" name="format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
-              <label class="choice"><input type="checkbox" name="format" value="AIFF"><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
-              <label class="choice"><input type="checkbox" name="format" value="FLAC"><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
-              <label class="choice"><input type="checkbox" name="format" value="MP3"><span class="choice-box"></span><span class="choice-label">MP3</span></label>
-            </div>
-          </fieldset>
           <div class="row row-tight">
+            <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
             <button class="button button-outlined button-lg" type="button" id="playlist-button" title="Choose a playlist CSV file. To use a Spotify or YouTube playlist, paste its link in the search box."><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
             <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input" tabindex="-1" aria-hidden="true">
@@ -92,16 +84,9 @@
       <div class="search-form mt-5" id="playlist-form" data-panel="playlist" hidden>
         <div class="file-list" id="csv-list"></div>
         <div class="search-form-row">
-          <fieldset class="fieldset fieldset-bare">
-            <legend class="visually-hidden">Playlist download formats</legend>
-            <div class="choice-group choice-group-row">
-              <label class="choice"><input type="checkbox" name="csv-format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
-              <label class="choice"><input type="checkbox" name="csv-format" value="AIFF"><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
-              <label class="choice"><input type="checkbox" name="csv-format" value="FLAC"><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
-              <label class="choice"><input type="checkbox" name="csv-format" value="MP3"><span class="choice-box"></span><span class="choice-label">MP3</span></label>
-            </div>
-          </fieldset>
           <div class="row row-tight">
+            <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
+            <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
             <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon" aria-hidden="true">search</span> Song</button>
             <button class="button button-outlined button-lg" type="button" id="scan-button" title="Look for every song first, then choose what to queue (up to 300 songs)"><span class="icon" aria-hidden="true">fact_check</span> Scan</button>
             <button class="button button-filled button-lg" type="button" id="import-button" title="Queue every song in the background as it's found (any size)"><span class="icon" aria-hidden="true">playlist_add</span> Import</button>
@@ -215,6 +200,41 @@
     </div>
   </section>
 </main>
+
+<dialog class="dialog dialog-sm" id="dlg-formats" aria-labelledby="dlg-formats-title">
+  <div class="dialog-header">
+    <span class="icon" aria-hidden="true">high_quality</span>
+    <h2 class="dialog-title" id="dlg-formats-title">Formats</h2>
+  </div>
+  <div class="dialog-body">
+    <fieldset class="fieldset fieldset-bare" data-formats-fieldset>
+      <legend class="visually-hidden">Formats, best first. Each song is fetched once, in the first of these Soulseek has.</legend>
+      <ul class="sortable" data-reorder data-formats-list>
+        <li class="sortable-item" data-format="WAV">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="format" value="WAV" checked><span class="choice-box"></span><span class="choice-label">WAV</span></label>
+        </li>
+        <li class="sortable-item" data-format="FLAC">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="format" value="FLAC" checked><span class="choice-box"></span><span class="choice-label">FLAC</span></label>
+        </li>
+        <li class="sortable-item" data-format="AIFF">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="format" value="AIFF"><span class="choice-box"></span><span class="choice-label">AIFF</span></label>
+        </li>
+        <li class="sortable-item" data-format="MP3">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="format" value="MP3"><span class="choice-box"></span><span class="choice-label">MP3</span></label>
+        </li>
+      </ul>
+      <p class="visually-hidden" data-reorder-status role="status" aria-live="polite"></p>
+    </fieldset>
+    <p class="text-caption text-muted mt-3" data-formats-note>Each song is downloaded once, in the first of these Soulseek has.</p>
+  </div>
+  <div class="dialog-actions">
+    <button class="button button-filled" type="button" data-dialog-close="done">Done</button>
+  </div>
+</dialog>
 
 <dialog class="dialog dialog-sm" id="dlg-sources" aria-labelledby="dlg-sources-title">
   <div class="dialog-header">

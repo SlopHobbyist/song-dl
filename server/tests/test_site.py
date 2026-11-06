@@ -65,21 +65,31 @@ async def queue_view(client):
     return await (await client.get('/api/queue')).json()
 
 
-async def test_search_finds_the_best_copy_of_each_format(site):
+async def found_in(client, query, formats):
+    """The song in each of the formats: one search apiece, as a search only finds one."""
+    return [(await search(client, query, [f]))['results'][0] for f in formats]
+
+
+async def test_search_finds_the_song_once_in_the_first_format_it_has(site, fake):
     job = await search(site, 'daft punk digital love', ['wav', 'aiff', 'flac', 'mp3'])
     assert job['state'] == 'done' and job['missing'] == []
-    assert [r['format'] for r in job['results']] == ['WAV', 'AIFF', 'FLAC', 'MP3']
+    assert [r['format'] for r in job['results']] == ['WAV']
+    assert len(fake.searches) == 1   # the formats after the one found aren't searched
     assert (job['title'], job['artist'], job['album']) == ('Digital Love', 'Daft Punk', 'Discovery')
-    flac = job['results'][2]
+
+    # The order given is the order they're tried in
+    job = await search(site, 'daft punk digital love', ['flac', 'wav'])
+    [flac] = job['results']
     assert flac['quality'] == '24-bit / 96 kHz' and flac['filename'] == 'Daft Punk - Digital Love.flac'
-    assert job['results'][3]['quality'] == '320 kbps'
+    job = await search(site, 'daft punk digital love', ['mp3', 'flac'])
+    assert [(r['format'], r['quality']) for r in job['results']] == [('MP3', '320 kbps')]
 
 
 async def test_search_reports_missing_formats_and_unknown_songs(site):
-    job = await search(site, 'radiohead weird fishes', ['flac', 'wav'])
-    assert [r['format'] for r in job['results']] == ['FLAC'] and job['missing'] == ['WAV']
-    job = await search(site, 'nobody never heard', ['flac'])
-    assert job['state'] == 'done' and job['results'] == [] and job['missing'] == ['FLAC']
+    job = await search(site, 'radiohead weird fishes', ['wav', 'aiff', 'flac', 'mp3'])
+    assert [r['format'] for r in job['results']] == ['FLAC'] and job['missing'] == ['WAV', 'AIFF']
+    job = await search(site, 'nobody never heard', ['flac', 'wav'])
+    assert job['state'] == 'done' and job['results'] == [] and job['missing'] == ['FLAC', 'WAV']
 
 
 async def test_search_input_is_checked(site):
@@ -90,8 +100,7 @@ async def test_search_input_is_checked(site):
 
 
 async def test_download_to_the_browser_and_zip(site, fake):
-    job = await search(site, 'daft punk digital love', ['wav', 'flac'])
-    ids = [await fetch(site, r['id']) for r in job['results']]
+    ids = [await fetch(site, r['id']) for r in await found_in(site, 'daft punk digital love', ['wav', 'flac'])]
     jobs = await finished(site, ids)
     assert all(j['state'] == 'done' and j['progress'] == 1 for j in jobs.values())
 
@@ -134,20 +143,22 @@ async def test_files_are_only_served_from_fetch_folders(site, fake, tmp_path):
 
 
 async def test_playlist_scan_then_download(site):
-    csv = 'title,artist\nDigital Love,Daft Punk\nBarbra Streisand,Duck Sauce\nNo Such Song,Nobody\n'
+    csv = 'title,artist\nDigital Love,Daft Punk\nWeird Fishes Arpeggi,Radiohead\nNo Such Song,Nobody\n'
     job = await scan(site, csv, 'wav,flac')
     assert (job['total'], job['scanned'], job['skipped']) == (3, 3, 0)
     states = [t['state'] for t in job['tracks']]
     assert states == ['found', 'found', 'missing']
+    # Each song once, in the first format it's on Soulseek in
+    assert [[r['format'] for r in t['results']] for t in job['tracks']] == [['WAV'], ['FLAC'], []]
     first = job['tracks'][0]
-    assert [r['format'] for r in first['results']] == ['WAV', 'FLAC'] and first['size'] == sum(r['size'] for r in first['results'])
-    assert job['tracks'][2]['results'] == [] and job['tracks'][2]['size'] is None
+    assert first['size'] == first['results'][0]['size']
+    assert job['tracks'][2]['size'] is None
 
     ids = [await fetch(site, r['id']) for t in job['tracks'] for r in t['results']]
     jobs = await finished(site, ids)
-    assert len(jobs) == 4 and all(j['state'] == 'done' for j in jobs.values())
+    assert len(jobs) == 2 and all(j['state'] == 'done' for j in jobs.values())
     res = await site.get(await zip_url(site, ids))
-    assert len(zipfile.ZipFile(io.BytesIO(await res.read())).namelist()) == 4
+    assert len(zipfile.ZipFile(io.BytesIO(await res.read())).namelist()) == 2
 
 
 async def test_scan_rejects_a_bad_csv(site):
@@ -223,12 +234,12 @@ async def test_repeated_wrong_passwords_lock_the_ip_out(site):
 
 
 async def test_queue_saves_songs_into_a_folder(admin, tmp_path):
-    job = await search(admin, 'daft punk digital love', ['wav', 'flac'])
-    res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in job['results']]})
+    results = await found_in(admin, 'daft punk digital love', ['wav', 'flac'])
+    res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in results]})
     assert await res.json() == {'queued': 2, 'skipped': 0}
 
     # Queueing the same songs again while they are in the queue does nothing
-    res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in job['results']]})
+    res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in results]})
     assert await res.json() == {'queued': 0, 'skipped': 2}
 
     view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] == 'done' for i in v['items']))
@@ -244,7 +255,7 @@ async def test_queue_saves_songs_into_a_folder(admin, tmp_path):
     # Asking again finds the files already there
     res = await admin.post('/api/queue/clear-done')
     assert (await res.json())['cleared'] == 2
-    await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [job['results'][0]['id']]})
+    await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [results[0]['id']]})
     view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and v['items'][0]['status'] == 'done')
     assert 'Already in the folder' in view['items'][0]['note']
     assert len(list(folder.iterdir())) == 2
@@ -252,8 +263,8 @@ async def test_queue_saves_songs_into_a_folder(admin, tmp_path):
 
 async def test_queue_controls(admin, fake, tmp_path):
     fake.speed = 0.5   # downloads take 8 seconds, so there is time to pause them
-    job = await search(admin, 'daft punk digital love', ['wav', 'flac', 'aiff', 'mp3'])
-    await admin.post('/api/queue', json={'folder': 'controls', 'results': [r['id'] for r in job['results']]})
+    results = await found_in(admin, 'daft punk digital love', ['wav', 'flac', 'aiff', 'mp3'])
+    await admin.post('/api/queue', json={'folder': 'controls', 'results': [r['id'] for r in results]})
 
     view = await wait_for(lambda: queue_view(admin), lambda v: sum(i['status'] == 'downloading' for i in v['items']) == 3)
     by_status = {i['status']: i for i in view['items']}
@@ -283,8 +294,8 @@ async def test_queue_controls(admin, fake, tmp_path):
 
 async def test_pause_all(admin, fake):
     fake.speed = 0.5
-    job = await search(admin, 'daft punk digital love', ['wav', 'flac'])
-    await admin.post('/api/queue', json={'folder': 'p', 'results': [r['id'] for r in job['results']]})
+    results = await found_in(admin, 'daft punk digital love', ['wav', 'flac'])
+    await admin.post('/api/queue', json={'folder': 'p', 'results': [r['id'] for r in results]})
     await wait_for(lambda: queue_view(admin), lambda v: any(i['status'] == 'downloading' for i in v['items']))
     assert (await (await admin.post('/api/queue/pause-all')).json())['paused'] == 2
     view = await queue_view(admin)
@@ -300,8 +311,8 @@ async def test_queue_folder_cannot_leave_the_downloads_folder(admin):
 
 async def test_queue_survives_a_restart(admin, fake, tmp_path):
     fake.speed = 0.2
-    job = await search(admin, 'daft punk digital love', ['flac', 'wav'])
-    await admin.post('/api/queue', json={'folder': 'kept', 'results': [r['id'] for r in job['results']]})
+    results = await found_in(admin, 'daft punk digital love', ['flac', 'wav'])
+    await admin.post('/api/queue', json={'folder': 'kept', 'results': [r['id'] for r in results]})
     await wait_for(lambda: queue_view(admin), lambda v: any(i['status'] == 'downloading' for i in v['items']))
     await admin.close()   # the app shuts down mid-download; the queue is saved
 
@@ -326,8 +337,7 @@ async def test_download_of_an_expired_result_is_refused(site):
 
 async def test_all_formats_into_a_new_nested_folder(admin, tmp_path):
     # Several songs start at once and all create the same new folders
-    job = await search(admin, 'daft punk digital love', ['wav', 'aiff', 'flac', 'mp3'])
-    ids = [r['id'] for r in job['results']]
+    ids = [r['id'] for r in await found_in(admin, 'daft punk digital love', ['wav', 'aiff', 'flac', 'mp3'])]
     await admin.post('/api/queue', json={'folder': 'archive/vinyl-rips', 'results': ids})
     view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] in ('done', 'failed') for i in v['items']))
     assert [i['status'] for i in view['items']] == ['done'] * 4, [i['note'] for i in view['items']]

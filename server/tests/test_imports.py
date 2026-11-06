@@ -56,7 +56,9 @@ async def test_an_import_queues_every_song_it_finds(admin):
     assert view['folder'] == 'Road Trip/' and view['formats'] == ['WAV', 'FLAC']
 
     items = (await queue_view(admin))['items']
-    assert len(items) == view['queued'] >= 2
+    # One version of each song: the first of the formats it was found in
+    assert len(items) == view['queued'] == 2 and {i['format'] for i in items} == {'WAV'}
+    assert view['elsewhere'] == 0
     assert {i['folder'] for i in items} == {'Road Trip/'}
     assert {i['title'] for i in items} == {'Digital Love', 'Barbra Streisand'}
 
@@ -131,7 +133,8 @@ async def test_the_menu_and_server_page_ask_for_less(admin):
 
 def test_time_left_uses_the_search_limit_until_it_has_a_pace():
     imp = imports.Import('x', ['wav', 'aiff'], '', 'a', [])
-    expected = 10 * 2 * imports.SEARCHES_PER_SONG * imports.SEARCH_WINDOW / imports.SEARCHES_PER_WINDOW
+    # 1.5 searches a song: found in the first format, or the second, or tried in both
+    expected = 10 * 1.5 * imports.SEARCHES_PER_SONG * imports.SEARCH_WINDOW / imports.SEARCHES_PER_WINDOW
     assert imp.eta(10) == round(expected)
     imp.run_started, imp.run_done = time.monotonic() - 100, 10
     assert imp.eta(10) == 100

@@ -92,8 +92,9 @@ def test_playlist_without_a_title_column_is_refused():
 
 
 def test_formats_are_validated_and_ordered():
-    assert parse_formats(['flac', 'WAV']) == ['wav', 'flac']
-    assert parse_formats('mp3,aiff') == ['aiff', 'mp3']
+    # Kept in the order given: it's the order they're tried in
+    assert parse_formats(['flac', 'WAV']) == ['flac', 'wav']
+    assert parse_formats('mp3,aiff,MP3') == ['mp3', 'aiff']
     for bad in ([], ['ogg'], 'x', None):
         with pytest.raises(UserError):
             parse_formats(bad)

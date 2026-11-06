@@ -72,11 +72,6 @@
 
   function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
-  /* Every ticked format checkbox in the group, in page order. */
-  function checkedValues(name) {
-    return $$('input[name="' + name + '"]:checked').map(function (input) { return input.value; });
-  }
-
   /* Writes text only when it differs, so live regions stay quiet on no-ops. */
   function setText(el, text) {
     text = String(text);
@@ -239,11 +234,16 @@
     $$('.badge-count, .nav-item-trailing').forEach(function (el) { setText(el, count); });
   }
 
-  /* ------------------------------------------------------------ Sources
-     Where to look for a song, and in what order: the first that has it
-     wins. Ticked and dragged into order in the Sources dialog, remembered
-     in this browser, and used by searches, scans and imports alike. */
+  /* ------------------------------------------------- Formats and sources
+     Both are a ticked, ordered list in a dialog: the first that works wins.
+     Formats: the Soulseek formats to look for, best first; each song is
+     fetched once, in the first one found. Sources: where to look, and in what
+     order. Remembered in this browser, and used by searches, scans and imports
+     alike. */
 
+  var FORMAT_NAMES = { WAV: 'WAV', FLAC: 'FLAC', AIFF: 'AIFF', MP3: 'MP3' };
+  var DEFAULT_FORMAT_ORDER = ['WAV', 'FLAC', 'AIFF', 'MP3'];
+  var DEFAULT_FORMATS = ['WAV', 'FLAC'];
   var SOURCE_NAMES = { soulseek: 'Soulseek', soundcloud: 'SoundCloud', youtube: 'YouTube' };
   var DEFAULT_SOURCES = ['soulseek', 'soundcloud', 'youtube'];
 
@@ -253,14 +253,16 @@
     return at > 0 ? job.sources.slice(0, at) : [];
   }
 
-  /* The ticked sources, in the order they're tried (top to bottom in the dialog). */
-  function chosenSources() {
-    var boxes = $$('input[name="source"]');
-    if (!boxes.length) return DEFAULT_SOURCES.slice();
+  /* The ticked boxes of a dialog's list, in the order they're tried (top to bottom). */
+  function chosenIn(name, defaults) {
+    var boxes = $$('input[name="' + name + '"]');
+    if (!boxes.length) return defaults.slice();
     return boxes.filter(function (box) { return box.checked && !box.disabled; })
       .map(function (box) { return box.value; });
   }
 
+  function chosenFormats() { return chosenIn('format', DEFAULT_FORMATS); }
+  function chosenSources() { return chosenIn('source', DEFAULT_SOURCES); }
   function usesSoulseek() { return chosenSources().indexOf('soulseek') > -1; }
 
   function loadSaved(key) {
@@ -270,66 +272,96 @@
     } catch (e) { return null; }
   }
 
-  function initSources() {
-    var list = $('[data-sources-list]');
-    var boxes = $$('input[name="source"]');
+  /* A dialog's sortable list of checkboxes: puts back the saved order and ticks, saves them
+     when they change, and calls apply() then. One box always stays ticked. */
+  function initChoiceList(o) {
+    var list = $(o.list);
+    var boxes = $$('input[name="' + o.name + '"]');
     if (!list || !boxes.length) return;
+    var chosen = function () { return chosenIn(o.name, o.defaults); };
 
-    /* Every source's place, ticked or not. Before there was an order, only the ticked ones
+    /* Every item's place, ticked or not. Before there was an order, only the ticked ones
        were saved, in the fixed order, which is as good a start as any */
-    var chosen = loadSaved('songdl-sources');
-    var order = loadSaved('songdl-source-order') || chosen || [];
-    order = order.filter(function (name) { return SOURCE_NAMES[name]; })
-      .concat(DEFAULT_SOURCES.filter(function (name) { return order.indexOf(name) < 0; }));
+    var ticked = loadSaved(o.key);
+    var order = loadSaved(o.orderKey) || ticked || [];
+    order = order.filter(function (name) { return o.names[name]; })
+      .concat(o.order.filter(function (name) { return order.indexOf(name) < 0; }));
     order.forEach(function (name) {
-      var item = $('[data-source="' + name + '"]', list);
+      var item = $('[' + o.attr + '="' + name + '"]', list);
       if (item) list.appendChild(item);
     });
-    if (chosen && chosen.length) {
-      boxes.forEach(function (box) { if (!box.disabled) box.checked = chosen.indexOf(box.value) > -1; });
+    if (ticked && ticked.length) {
+      boxes.forEach(function (box) { if (!box.disabled) box.checked = ticked.indexOf(box.value) > -1; });
     }
-    if (!chosenSources().length) {
-      boxes.forEach(function (box) { if (!box.disabled) box.checked = DEFAULT_SOURCES.indexOf(box.value) > -1; });
+    if (!chosen().length) {
+      boxes.forEach(function (box) { if (!box.disabled) box.checked = o.defaults.indexOf(box.value) > -1; });
     }
 
     function save() {
-      var all = $$('[data-source]', list).map(function (item) { return item.getAttribute('data-source'); });
+      var all = $$('[' + o.attr + ']', list).map(function (item) { return item.getAttribute(o.attr); });
       try {
-        localStorage.setItem('songdl-sources', JSON.stringify(chosenSources()));
-        localStorage.setItem('songdl-source-order', JSON.stringify(all));
+        localStorage.setItem(o.key, JSON.stringify(chosen()));
+        localStorage.setItem(o.orderKey, JSON.stringify(all));
       } catch (e) {}
-    }
-
-    function apply() {
-      var names = chosenSources().map(function (name) { return SOURCE_NAMES[name]; });
-      $$('[data-sources-button]').forEach(function (button) {
-        button.title = 'Looks on ' + names.join(', then ');
-        button.setAttribute('aria-label', 'Sources: ' + names.join(', then '));
-      });
-      /* The formats only choose what to get from Soulseek */
-      var soulseek = usesSoulseek();
-      $$('input[name="format"], input[name="csv-format"]').forEach(function (input) {
-        var fieldset = input.closest('fieldset');
-        if (!fieldset) return;
-        fieldset.disabled = !soulseek;
-        fieldset.title = soulseek ? '' : 'Formats are for Soulseek, which is turned off in Sources';
-      });
     }
 
     boxes.forEach(function (box) {
       box.addEventListener('change', function () {
-        if (!chosenSources().length) {
+        if (!chosen().length) {
           box.checked = true;
-          toast('Pick at least one place to look', 'warning');
+          toast(o.empty, 'warning');
         }
         save();
-        apply();
+        o.apply();
       });
     });
     /* The kit's sortable list moves the rows itself (dragged, or by keyboard from the handle)
        and doesn't say so, so watch for the rows changing places */
-    new MutationObserver(function () { save(); apply(); }).observe(list, { childList: true });
-    apply();
+    new MutationObserver(function () { save(); o.apply(); }).observe(list, { childList: true });
+    o.apply();
+  }
+
+  function labelButtons(selector, label, title) {
+    $$(selector).forEach(function (button) {
+      button.title = title;
+      button.setAttribute('aria-label', label + ': ' + title);
+    });
+  }
+
+  /* The formats only choose what to get from Soulseek */
+  function applyFormats() {
+    var soulseek = usesSoulseek();
+    labelButtons('[data-formats-button]', 'Formats', soulseek
+      ? 'Downloads ' + chosenFormats().join(', else ')
+      : 'Formats are for Soulseek, which is turned off in Sources');
+    var fieldset = $('[data-formats-fieldset]');
+    if (fieldset) fieldset.disabled = !soulseek;
+    setText($('[data-formats-note]'), soulseek
+      ? 'Each song is downloaded once, in the first of these Soulseek has.'
+      : 'Formats are for Soulseek, which is turned off in Sources.');
+  }
+
+  function initFormats() {
+    initChoiceList({
+      list: '[data-formats-list]', name: 'format', attr: 'data-format',
+      names: FORMAT_NAMES, order: DEFAULT_FORMAT_ORDER, defaults: DEFAULT_FORMATS,
+      key: 'songdl-formats', orderKey: 'songdl-format-order',
+      empty: 'Pick at least one format', apply: applyFormats
+    });
+  }
+
+  function initSources() {
+    initChoiceList({
+      list: '[data-sources-list]', name: 'source', attr: 'data-source',
+      names: SOURCE_NAMES, order: DEFAULT_SOURCES, defaults: DEFAULT_SOURCES,
+      key: 'songdl-sources', orderKey: 'songdl-source-order',
+      empty: 'Pick at least one place to look',
+      apply: function () {
+        var names = chosenSources().map(function (name) { return SOURCE_NAMES[name]; });
+        labelButtons('[data-sources-button]', 'Sources', 'Looks on ' + names.join(', then '));
+        applyFormats();
+      }
+    });
   }
 
   /* ------------------------------------------- Search / playlist switch */
@@ -875,7 +907,7 @@
     }
 
     function showEmpty(job) {
-      var what = job.missing.join(', ');
+      var what = job.missing.join(' or ');
       var soulseek = job.sources.indexOf('Soulseek') > -1;
       var others = job.sources.filter(function (s) { return s !== 'Soulseek'; });
       var message;
@@ -898,7 +930,7 @@
       if (isBusy(submit)) return;
       var query = $('#q').value.trim();
       if (handOffLink && handOffLink(query)) return;
-      var formats = checkedValues('format');
+      var formats = chosenFormats();
       var sources = chosenSources();
       var soulseek = sources.indexOf('soulseek') > -1;
       var video = videoHint && videoHint.query === query ? videoHint.id : null;
@@ -1084,7 +1116,7 @@
     button.addEventListener('click', async function () {
       if (isBusy(button)) return;
       var file = chosenPlaylist();
-      var formats = checkedValues('csv-format');
+      var formats = chosenFormats();
       var sources = chosenSources();
       if (!file) {
         toast('Choose a playlist CSV or paste a playlist link first', 'warning');
@@ -1257,13 +1289,13 @@
 
   var refreshImports = null;   // set by initImports, so a new import shows at once
 
-  /* What a scan or import looks for, in the order it's tried: "WAV + FLAC", "WAV + FLAC, else
-     SoundCloud, else YouTube", "YouTube, else Soulseek WAV + FLAC" or "YouTube". */
+  /* What a scan or import looks for, in the order it's tried: "WAV, else FLAC", "WAV, else FLAC,
+     else SoundCloud, else YouTube", "YouTube, else Soulseek WAV, else FLAC" or "YouTube". */
   function lookedFor(formats, sources) {
     sources = sources || ['Soulseek'];
     return sources.map(function (s, i) {
       if (s !== 'Soulseek') return s;
-      return (i ? 'Soulseek ' : '') + formats.join(' + ');
+      return (i ? 'Soulseek ' : '') + formats.join(', else ');
     }).join(', else ');
   }
 
@@ -1273,7 +1305,7 @@
     button.addEventListener('click', async function () {
       if (isBusy(button)) return;
       var file = chosenPlaylist();
-      var formats = checkedValues('csv-format');
+      var formats = chosenFormats();
       if (!file) {
         toast('Choose a playlist CSV or paste a playlist link first', 'warning');
         return;
@@ -1314,7 +1346,7 @@
     if (imp.state === 'paused') html += actionButton('resume', 'play_arrow', 'Resume', name);
     if (imp.state === 'cancelled') html += actionButton('resume', 'refresh', 'Restart', name);
     if (imp.state === 'running' || imp.state === 'paused') html += actionButton('cancel', 'block', 'Cancel', name);
-    if (imp.missing || imp.queued < imp.found * imp.formats.length) {
+    if (imp.missing || imp.elsewhere) {
       var label = 'Download the songs of ' + escapeHtml(name) + ' that weren\'t found, as a CSV';
       html += '<a class="button button-icon button-icon-sm" href="/api/imports/' + encodeURIComponent(imp.id) +
         '/missing.csv" download aria-label="' + label + '" title="' + label + '"><span class="icon icon-sm">playlist_remove</span></a>';
@@ -1801,6 +1833,7 @@
   }
 
   initChrome();
+  initFormats();
   initSources();
   initPanels();
   var handOffLink = initPlaylistLink();

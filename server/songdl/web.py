@@ -97,18 +97,18 @@ async def read_json(request, max_size=MAX_JSON):
 
 
 def parse_formats(raw):
-    """["wav", "FLAC"] or "wav,flac" -> ['wav', 'flac'], in the order the site lists them."""
+    """["FLAC", "wav"] or "flac,wav" -> ['flac', 'wav']: the formats wanted, in the order given,
+    which is the order they're tried in. Only the first one found is fetched."""
     if isinstance(raw, str):
         raw = raw.split(',')
     if not isinstance(raw, list):
         raise UserError('Pick at least one format.')
-    chosen = {str(f).strip().lower() for f in raw}
+    chosen = [f for f in dict.fromkeys(str(f).strip().lower() for f in raw) if f]
     if not chosen:
         raise UserError('Pick at least one format.')
-    unknown = chosen - set(matching.FORMATS)
-    if unknown:
+    if set(chosen) - set(matching.FORMATS):
         raise UserError('Pick WAV, AIFF, FLAC or MP3.')
-    return [f for f in matching.FORMATS if f in chosen]
+    return chosen
 
 
 def parse_sources(raw):

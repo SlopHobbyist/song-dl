@@ -78,7 +78,7 @@ main:focus { outline: none; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-4);
 }
 
@@ -238,6 +238,8 @@ main:focus { outline: none; }
   .cover { width: 96px; }
   .search-form-row > .row { flex: 1 1 100%; }
   .search-form-row > .row > .button { flex: 1 1 0; white-space: nowrap; padding-inline: var(--space-3); }
+  /* ...but the icon-only ones stay square, leaving the room to the ones with words */
+  .search-form-row > .row > :is([data-formats-button], [data-sources-button]) { flex: none; padding-inline: 0; }
   .queue-table .col-status,
   .queue-table .col-progress { width: auto; }
   .progress-cell { min-width: 96px; gap: var(--space-2); }
@@ -278,14 +280,17 @@ main:focus { outline: none; }
   .progress-cell { min-width: 0; }
 }
 
-/* The Sources button is just its icon, square to sit beside the other big buttons */
+/* The Formats and Sources buttons are just their icons, square to sit beside the other big buttons */
+[data-formats-button],
 [data-sources-button] { width: var(--size-control-lg); padding-inline: 0; flex: none; }
 
-/* Sources dialog: a sortable list, tried top to bottom. The checkbox label fills the row so
-   the whole row toggles it; only the handle drags. */
-[data-sources-list] .sortable-item { padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); }
+/* Formats and Sources dialogs: a sortable list, tried top to bottom. The checkbox label fills
+   the row so the whole row toggles it; only the handle drags. */
+:is([data-formats-list], [data-sources-list]) .sortable-item { padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); }
 /* The kit's .choice tops the box and label for multi-line labels; these are one line, so
    center them on the row like the handle. */
-[data-sources-list] .choice { cursor: pointer; align-items: center; padding-block: 0; }
-[data-sources-list] .choice-box { margin-top: 0; }
-[data-sources-list] .sortable-item:has(input:not(:checked)) .choice-label { color: var(--color-on-surface-muted); }
+:is([data-formats-list], [data-sources-list]) .choice { cursor: pointer; align-items: center; padding-block: 0; }
+:is([data-formats-list], [data-sources-list]) .choice-box { margin-top: 0; }
+:is([data-formats-list], [data-sources-list]) .sortable-item:has(input:not(:checked)) .choice-label { color: var(--color-on-surface-muted); }
+/* Soulseek turned off in Sources: the formats don't apply */
+[data-formats-fieldset]:disabled { opacity: .5; }

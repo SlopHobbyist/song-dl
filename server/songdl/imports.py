@@ -7,14 +7,16 @@ open, it is written to disk and carries on after a restart, and the songs it
 finds go straight into the server queue, so nothing it found can expire.
 
 Each song is looked for in the sources the admin ticked, in the order they put
-them in, and stops at the first that has it: Soulseek in every format asked
-for, or the best audio on SoundCloud or YouTube (see soundcloud_audio.py,
+them in, and stops at the first that has it: Soulseek in the first of the
+admin's formats it has (tried in the order they put them in), or the best
+audio on SoundCloud or YouTube (see soundcloud_audio.py,
 youtube_audio.py).
 
 It is slow on purpose. Soulseek bans clients that search too fast, so every
 search waits its turn in the engine's SearchLimiter, behind visitors' searches
-and scans. Expect about 9 searches a minute: one per song and format, and a
-second one when a search for the artist comes back empty.
+and scans. Expect about 9 searches a minute: one per song and format tried
+(a song found in the first format needs just one), and a second one when a
+search for the artist comes back empty.
 
 States: running, paused, done, cancelled. Songs: pending, searching, found, missing.
 """
@@ -52,7 +54,7 @@ class ImportTrack:
     def __init__(self, track: Track, state='pending', found=(), note=''):
         self.track = track
         self.state = state
-        self.found = list(found)   # formats queued
+        self.found = list(found)   # the format (or 'soundcloud' / 'youtube') queued; at most one
         self.note = note
 
     def to_list(self):
@@ -108,7 +110,9 @@ class Import:
         if self.run_done >= 5 and self.run_started:
             per_song = (time.monotonic() - self.run_started) / self.run_done
         else:
-            per_song = len(self.formats) * SEARCHES_PER_SONG * SEARCH_WINDOW / SEARCHES_PER_WINDOW
+            # Most songs are found in the first format or two; the ones never found try them all
+            tries = (1 + len(self.formats)) / 2
+            per_song = tries * SEARCHES_PER_SONG * SEARCH_WINDOW / SEARCHES_PER_WINDOW
         return round(left * per_song)
 
     def view(self):
@@ -129,6 +133,9 @@ class Import:
             'left': left,
             'skipped': self.skipped,
             'queued': sum(len(t.found) for t in self.tracks),
+            # Found, but not on Soulseek: they're in the missing CSV too
+            'elsewhere': sum(bool(t.found) and not any(f in self.formats for f in t.found) for t in self.tracks)
+            if 'soulseek' in self.sources else 0,
             'current': [t.track.label for t in self.tracks if t.state == 'searching'][:WORKERS],
             'eta': self.eta(left),
             'created': self.created,
@@ -140,11 +147,11 @@ class Import:
         writer = csv.writer(out, lineterminator='\r\n')
         writer.writerow(['Track Name', 'Artist Name(s)', 'Album Name', 'Duration (ms)', 'Not found in'])
         for t in self.tracks:
-            lacking = [f for f in self.formats if f not in t.found]
-            if t.state in ('found', 'missing') and lacking:
+            # Not on Soulseek in any of the formats (found on SoundCloud or YouTube, maybe)
+            if t.state in ('found', 'missing') and not any(f in self.formats for f in t.found):
                 d = t.track.duration
                 writer.writerow([t.track.title, t.track.artist, t.track.album, d * 1000 if d else '',
-                                 ' '.join(f.upper() for f in lacking)])
+                                 ' '.join(f.upper() for f in self.formats)])
         return '﻿' + out.getvalue()
 
     def to_dict(self):
@@ -303,19 +310,15 @@ class Importer:
 
     async def _search(self, imp: Import, t: ImportTrack):
         try:
-            # A song that was paused part way through Soulseek's formats only has the rest to get
-            order = ['soulseek'] if any(f in imp.formats for f in t.found) else imp.sources
-            for source in order:
+            for source in imp.sources:
+                if t.found:   # (an import saved by an older version may have one already)
+                    break
                 if source == 'soulseek':
                     ok = await self._soulseek(imp, t)
-                elif t.found:
-                    break
                 else:
                     ok = await self._elsewhere(imp, t, source)
                 if not ok:
                     return
-                if t.found:
-                    break
             t.state = 'found' if t.found else 'missing'
             t.note = ''
             imp.run_done += 1
@@ -333,10 +336,9 @@ class Importer:
             self._changed()
 
     async def _soulseek(self, imp: Import, t: ImportTrack):
-        """Queues the song from Soulseek in every format it has. False when the import had to stop."""
+        """Queues the song from Soulseek in the first of the formats it has. False when the import
+        had to stop."""
         for fmt in imp.formats:
-            if fmt in t.found:
-                continue
             try:
                 cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
             except UserError as e:
@@ -351,6 +353,7 @@ class Importer:
                 self._pause(imp, t, e)
                 return False
             t.found.append(fmt)
+            return True
         return True
 
     def _pause(self, imp, t, e):

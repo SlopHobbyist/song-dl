@@ -2,10 +2,12 @@
 scanning a playlist, and fetching a file to hand to the visitor.
 
 Each search or scan looks in the sources the visitor ticked, in the order they
-put them in, and stops at the first that has the song: Soulseek in every format
-asked for, SoundCloud's best stream, or YouTube's best audio.
+put them in, and stops at the first that has the song: Soulseek in the first of
+the visitor's formats it has (they're tried in the order the visitor put them
+in), SoundCloud's best stream, or YouTube's best audio. So each song is found,
+and fetched, in one version only.
 
-A search or scan registers an Entry for every file it finds: the ranked list of
+A search or scan registers an Entry for the file it finds: the ranked list of
 copies of one song in one format. The browser downloads an Entry, or an admin
 queues it on the server (see server_queue.py), by naming its id.
 """
@@ -123,7 +125,7 @@ class Job:
 
 
 class SearchJob(Job):
-    """Looks for one song in every format asked for."""
+    """Looks for one song, in the first of the formats asked for that it can be found in."""
 
     def __init__(self, query, formats, sources=('soulseek',), video=None):
         super().__init__()
@@ -132,8 +134,8 @@ class SearchJob(Job):
         self.sources = list(sources)
         self.video = video   # the YouTube video the search came from, if it came from a link
         self.status = f'Searching {matching.SOURCE_LABELS[self.sources[0]]}'
-        self.found = {}     # format -> Entry
-        self.missing = []   # formats nothing was found in on Soulseek
+        self.found = {}     # format -> Entry; at most one
+        self.missing = []   # formats nothing was found in on Soulseek, before the one that was
         self.elsewhere = None  # the Entry found on SoundCloud or YouTube, when that's where it was
 
     def view(self):
@@ -161,7 +163,7 @@ class ScanTrack:
     def __init__(self, track: Track):
         self.track = track
         self.state = 'pending'
-        self.found = {}      # format, or 'soundcloud' / 'youtube' -> Entry
+        self.found = {}      # format, or 'soundcloud' / 'youtube' -> Entry; at most one
 
     def view(self, formats):
         for entry in self.found.values():
@@ -178,7 +180,7 @@ class ScanTrack:
 
 
 class ScanJob(Job):
-    """Looks for every song of a playlist, in every format asked for."""
+    """Looks for every song of a playlist, each in the first of the formats asked for it's found in."""
 
     def __init__(self, name, formats, tracks, skipped, sources=('soulseek',)):
         super().__init__()
@@ -315,11 +317,22 @@ class Manager:
         job.finish()
 
     async def _search_soulseek(self, job: SearchJob):
+        fmt = None
+
         def status(text):
+            # "No WAV on Soulseek. Searching Soulseek for FLAC: 12 responses so far"
+            if len(job.formats) > 1:
+                text = text.replace('Searching Soulseek', f'Searching Soulseek for {matching.LABELS[fmt]}')
+            if job.missing:
+                text = f'No {" or ".join(matching.LABELS[f] for f in job.missing)} on Soulseek. {text}'
             job.status = text
 
-        rankings = await asyncio.gather(*(self.engine.search(job.query, f, status) for f in job.formats))
-        for fmt, ranking in zip(job.formats, rankings):
+        # One format at a time, best first, so a song is only found (and fetched) once, and the
+        # formats after the one found don't use up searches
+        for fmt in job.formats:
+            if job.missing:
+                status('Searching Soulseek')
+            ranking = await self.engine.search(job.query, fmt, status)
             if not ranking.candidates:
                 job.missing.append(fmt)
                 continue
@@ -328,6 +341,7 @@ class Manager:
             job.found[fmt] = self._register(
                 ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
                 meta.get('artist') or '', meta.get('album') or '')
+            return
 
     # Playlist scan
 
@@ -349,6 +363,7 @@ class Manager:
 
     async def _scan_track(self, job: ScanJob, st: ScanTrack):
         async def one(fmt):
+            """Looks for the song in one format on Soulseek; True when it was found."""
             async with self.search_slots:
                 st.state = 'searching'
                 try:
@@ -356,22 +371,25 @@ class Manager:
                 except UserError as e:
                     if e.status != 400:   # 400 is "No match found"
                         log.warning('scan of %r stopped: %s', st.track.label, e)
-                    return
+                    return False
                 except SlskdError as e:
                     log.warning('slskd error scanning %r: %s', st.track.label, e)
-                    return
+                    return False
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     log.exception('scan of %r crashed', st.track.label)
-                    return
+                    return False
                 st.found[fmt] = self._register(cands, fmt, st.track.title, st.track.artist, st.track.album)
+                return True
 
         for source in job.sources:
             if st.found:
                 break
             if source == 'soulseek':
-                await asyncio.gather(*(one(f) for f in job.formats))
+                for fmt in job.formats:   # best first; stop at the first one found
+                    if await one(fmt):
+                        break
                 continue
             st.state = 'searching'
             try:
