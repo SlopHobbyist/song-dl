@@ -20,6 +20,8 @@
 #
 # The captcha answerer is off by default and its llm container doesn't start. To use it, set
 # captcha.enabled: True in config.yaml and run: sudo docker compose --profile captcha up -d
+# Stop it the same way (sudo docker compose --profile captcha down), or a plain down leaves llm running.
+# To skip the flag, put COMPOSE_PROFILES=captcha in a .env file next to this file.
 
 services:
   # Writes slskd/slskd.yml from config.yaml, then exits. If config.yaml still has the example
