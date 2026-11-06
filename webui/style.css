@@ -74,6 +74,11 @@ main:focus { outline: none; }
   font-size: var(--type-subtitle-size);
 }
 
+/* The chosen playlist, in a bar shaped like the search box. The X sits
+   closer to the edge than the text would. */
+.playlist-bar { padding-inline-end: var(--space-2); }
+.playlist-bar > .grow { min-width: 0; }
+
 .search-form-row {
   display: flex;
   flex-wrap: wrap;

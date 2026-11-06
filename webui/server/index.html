@@ -73,9 +73,9 @@
           <div class="row row-tight">
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
-            <button class="button button-outlined button-lg" type="button" id="playlist-button" title="Choose a playlist CSV file. To use a Spotify or YouTube playlist, paste its link in the search box."><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
+            <button class="button button-outlined button-lg" type="button" id="playlist-button" title="Upload Playlist"><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
             <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input" tabindex="-1" aria-hidden="true">
-            <button class="button button-filled button-lg" type="submit"><span class="icon" aria-hidden="true">search</span> Search</button>
+            <button class="button button-filled button-lg" type="submit" title="Search"><span class="icon" aria-hidden="true">search</span> Search</button>
           </div>
         </div>
       </form>
@@ -87,7 +87,6 @@
           <div class="row row-tight">
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
-            <button class="button button-outlined button-lg" type="button" data-show-panel="search"><span class="icon" aria-hidden="true">search</span> Song</button>
             <button class="button button-outlined button-lg" type="button" id="scan-button" title="Look for every song first, then choose what to queue (up to 300 songs)"><span class="icon" aria-hidden="true">fact_check</span> Scan</button>
             <button class="button button-filled button-lg" type="button" id="import-button" title="Queue every song in the background as it's found (any size)"><span class="icon" aria-hidden="true">playlist_add</span> Import</button>
           </div>
@@ -208,7 +207,7 @@
   </div>
   <div class="dialog-body">
     <fieldset class="fieldset fieldset-bare" data-formats-fieldset>
-      <legend class="visually-hidden">Formats, best first. Each song is fetched once, in the first of these Soulseek has.</legend>
+      <legend class="visually-hidden">Formats, best first</legend>
       <ul class="sortable" data-reorder data-formats-list>
         <li class="sortable-item" data-format="WAV">
           <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
@@ -229,7 +228,7 @@
       </ul>
       <p class="visually-hidden" data-reorder-status role="status" aria-live="polite"></p>
     </fieldset>
-    <p class="text-caption text-muted mt-3" data-formats-note>Each song is downloaded once, in the first of these Soulseek has.</p>
+    <p class="text-caption text-muted mt-3" data-formats-note hidden></p>
   </div>
   <div class="dialog-actions">
     <button class="button button-filled" type="button" data-dialog-close="done">Done</button>

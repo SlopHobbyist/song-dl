@@ -321,10 +321,11 @@
     o.apply();
   }
 
-  function labelButtons(selector, label, title) {
+  /* The tooltip is just the name; screen readers also hear what's chosen. */
+  function labelButtons(selector, label, detail) {
     $$(selector).forEach(function (button) {
-      button.title = title;
-      button.setAttribute('aria-label', label + ': ' + title);
+      button.title = label;
+      button.setAttribute('aria-label', label + ': ' + detail);
     });
   }
 
@@ -336,9 +337,11 @@
       : 'Formats are for Soulseek, which is turned off in Sources');
     var fieldset = $('[data-formats-fieldset]');
     if (fieldset) fieldset.disabled = !soulseek;
-    setText($('[data-formats-note]'), soulseek
-      ? 'Each song is downloaded once, in the first of these Soulseek has.'
-      : 'Formats are for Soulseek, which is turned off in Sources.');
+    var note = $('[data-formats-note]');
+    if (note) {
+      setText(note, soulseek ? '' : 'Formats are for Soulseek, which is turned off in Sources.');
+      note.hidden = soulseek;
+    }
   }
 
   function initFormats() {
@@ -406,14 +409,6 @@
     if (focus) focus.focus();
   }
 
-  function initPanels() {
-    $$('[data-show-panel]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        showPanel(button.getAttribute('data-show-panel'));
-      });
-    });
-  }
-
   /* --------------------------------------------------- Playlist links
      A link to a single YouTube video becomes a search for its song.
      A Spotify or YouTube playlist link, pasted in the song search box, is read
@@ -476,12 +471,21 @@
       if (importButton) importButton.removeAttribute('aria-disabled');
     }
 
+    /* The playlist sits in a bar shaped like the song search box, with an X
+       on the right that drops it and goes back to the song search. */
+    function removeButton(name) {
+      return '<button class="button button-icon button-icon-sm" type="button" data-action="remove-playlist"' +
+        ' aria-label="Remove ' + escapeHtml(name) + '" title="Remove">' +
+        '<span class="icon" aria-hidden="true">close</span></button>';
+    }
+
     function showFile(file) {
       list.innerHTML =
-        '<div class="file-item">' +
-          '<span class="icon icon-sm">description</span>' +
+        '<div class="search search-hero playlist-bar">' +
+          '<span class="icon" aria-hidden="true">description</span>' +
           '<span class="grow text-truncate" title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</span>' +
           '<span class="text-caption text-muted">' + count(Math.max(1, Math.round(file.size / 1024))) + ' KB</span>' +
+          removeButton(file.name) +
         '</div>';
     }
 
@@ -501,10 +505,11 @@
 
     function showReading(source) {
       list.innerHTML =
-        '<div class="file-item" aria-busy="true">' +
-          '<span class="icon icon-sm">hourglass_top</span>' +
+        '<div class="search search-hero playlist-bar" aria-busy="true">' +
+          '<span class="icon" aria-hidden="true">hourglass_top</span>' +
           '<span class="grow text-truncate">Reading the playlist from ' + source + '…' +
             (source === 'YouTube' ? ' A big one takes up to a minute.' : '') + '</span>' +
+          removeButton('playlist') +
         '</div>';
     }
 
@@ -512,8 +517,8 @@
       var limit = page === 'server' ? linked.maxImport : linked.maxScan;
       var tooBig = linked.total > limit;
       list.innerHTML =
-        '<div class="file-item">' +
-          '<span class="icon icon-sm">queue_music</span>' +
+        '<div class="search search-hero playlist-bar">' +
+          '<span class="icon" aria-hidden="true">queue_music</span>' +
           '<span class="grow text-truncate" title="' + escapeHtml(linked.name) + '">' + escapeHtml(linked.name) + '</span>' +
           '<span class="text-caption ' + (tooBig ? 'text-warning' : 'text-muted') + '"' +
             (tooBig ? ' title="' + (page === 'server' ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
@@ -525,6 +530,7 @@
           '<button class="button button-outlined button-sm" type="button" data-action="save-csv"' +
             ' aria-label="Download ' + escapeHtml(linked.file.name) + '" title="Save the playlist as a CSV, to scan later">' +
             '<span class="icon icon-sm">download</span> CSV</button>' +
+          removeButton(linked.name) +
         '</div>';
     }
 
@@ -669,20 +675,20 @@
       useFile(files[0]);
     });
 
-    /* Going back to the song search drops a playlist still being read. A read
-       one is kept, so pasting the same link again doesn't read it twice; the
-       file input is cleared so picking the same file again still works. */
-    $$('[data-show-panel="search"]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        if (!linked) forgetLink();
-        input.value = '';
-      });
-    });
-
     list.addEventListener('click', function (event) {
       if (event.target.closest('[data-action="save-csv"]') && linked) {
         saveBlob(linked.file);
         announce('Downloading ' + linked.file.name);
+      }
+      /* The X drops the playlist (a file, a link, or one still being read)
+         and goes back to the song search. The file input is cleared so
+         picking the same file again still works. */
+      if (event.target.closest('[data-action="remove-playlist"]')) {
+        forgetLink();
+        input.value = '';
+        list.innerHTML = '';
+        showPanel('search');
+        announce('Playlist removed');
       }
     });
 
@@ -1835,7 +1841,6 @@
   initChrome();
   initFormats();
   initSources();
-  initPanels();
   var handOffLink = initPlaylistLink();
   initSearch();
   initScan();

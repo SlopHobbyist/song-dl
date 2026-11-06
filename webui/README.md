@@ -19,7 +19,7 @@ or
 
 - Press the Playlist button to choose a playlist's song csv (or drop the csv anywhere on the page),
   or paste a Spotify or YouTube playlist link in the search box
-- The playlist panel opens only then, showing the playlist and buttons; Song goes back
+- The playlist panel opens only then, showing the playlist in a bar like the search box; its X removes it and goes back
 - Formats (WAV, FLAC, AIFF, MP3) and Sources are ticked and dragged into order in their own dialogs;
   each song is downloaded once, in the first format Soulseek has (WAV, else FLAC by default)
 - Press Upload and scan button
