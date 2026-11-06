@@ -12,7 +12,8 @@ and fetched, in one version only.
 
 A search or scan registers an Entry for the file it finds: the ranked list of
 copies of one song in one format. The browser downloads an Entry, or an admin
-queues it on the server (see server_queue.py), by naming its id.
+queues it on the server (see server_queue.py), by naming its id. In DJ mode the
+file is made into one every CDJ plays (dj.py) before it's handed over.
 """
 
 import asyncio
@@ -23,7 +24,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from . import library, matching
+from . import dj, library, matching
 from .engine import LOW_DISK, SCAN, UNREACHABLE, Engine, mb
 from .errors import UserError
 from .playlist import Track
@@ -97,6 +98,7 @@ class Entry:
             'from': who,      # the channel or account
             'link': link,
             'local': c.source == 'local',
+            'dj': dj.predict(c),   # what DJ mode will likely make of it
         }
 
 
@@ -228,10 +230,13 @@ class ScanJob(Job):
 class DownloadJob(Job):
     """Fetches one Entry onto the server so the browser can download it."""
 
-    def __init__(self, entry: Entry, ip):
+    def __init__(self, entry: Entry, ip, dj=False):
         super().__init__()
         self.entry = entry
         self.ip = ip
+        self.dj = dj        # make it CDJ-ready (dj.py) once it's here
+        self.size = None    # of the file handed over, once known
+        self.dj_label = None
         self.progress = None
         self.speed = None
         self.note = 'Starting'
@@ -263,9 +268,10 @@ class DownloadJob(Job):
             'note': self.note,
             'file': self.file,
             'name': self.name,
-            'size': self.entry.best.size,
+            'size': self.size or self.entry.best.size,
             'title': self.entry.title,
             'format': matching.LABELS[self.entry.fmt],
+            'dj': self.dj_label,
         }
 
 
@@ -449,7 +455,7 @@ class Manager:
 
     # Fetching for the visitor
 
-    async def start_download(self, entry_id, ip):
+    async def start_download(self, entry_id, ip, dj=False):
         entry = self.entry(entry_id)
         if sum(j.state == 'running' and j.ip == ip for j in self.downloads.values()) >= MAX_DOWNLOADS_PER_IP:
             raise UserError('You already have a lot of downloads going. Please wait for some to finish.', 429)
@@ -457,7 +463,7 @@ class Manager:
             await self.engine.check_connected()
         if self.engine.low_disk():
             raise UserError(LOW_DISK, 507)
-        job = DownloadJob(entry, ip)
+        job = DownloadJob(entry, ip, dj)
         self.downloads[job.id] = job
         job.task = self.engine.spawn(job.guard(self._download(job)))
         return job
@@ -470,10 +476,18 @@ class Manager:
         fetch = await self.engine.download(job.entry.cands, update)
         e = job.entry
         self.engine.library.add(fetch.path, e.title, e.artist, e.album, fetch.cand, e.query)
-        job.path = fetch.path
-        job.name = file_stem(job.entry.title, job.entry.artist) + fetch.path.suffix.lower()
-        job.file = f'/files/{fetch.id}/{quote(fetch.path.name)}?as={quote(job.name)}'
-        job.progress, job.speed, job.note = 1, None, f'Ready ({mb(fetch.cand.size)})'
+        stem = file_stem(e.title, e.artist)
+        path, ready = fetch.path, ''
+        if job.dj:
+            job.progress, job.speed, job.note = 1, None, 'Making it CDJ-ready'
+            copy = await self.engine.dj.copy(fetch.path, stem, e.title, e.artist, e.album)
+            path, job.dj_label = copy.path, copy.label
+            ready = copy.label + ', '
+        job.path = path
+        job.size = path.stat().st_size
+        job.name = stem + path.suffix.lower()
+        job.file = f'/files/{path.parent.name}/{quote(path.name)}?as={quote(job.name)}'
+        job.progress, job.speed, job.note = 1, None, f'Ready ({ready}{mb(job.size)})'
         job.finish()
 
     # Housekeeping

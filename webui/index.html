@@ -66,6 +66,7 @@
         <div class="row row-tight">
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
+          <button class="button button-outlined button-lg" type="button" data-dj-button aria-pressed="false" aria-label="DJ mode" title="DJ mode" hidden><span class="icon" aria-hidden="true">album</span></button>
           <button class="button button-outlined button-lg" type="button" id="playlist-button" title="Upload Playlist"><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
           <input type="file" accept=".csv,.txt,text/csv,text/plain" class="visually-hidden" id="csv-input" tabindex="-1" aria-hidden="true">
           <button class="button button-filled button-lg" type="submit" title="Search"><span class="icon" aria-hidden="true">search</span> Search</button>
@@ -80,6 +81,7 @@
         <div class="row row-tight">
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
+          <button class="button button-outlined button-lg" type="button" data-dj-button aria-pressed="false" aria-label="DJ mode" title="DJ mode" hidden><span class="icon" aria-hidden="true">album</span></button>
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-delivery" data-delivery-button aria-haspopup="dialog" aria-label="Download as" title="Download as"><span class="icon" aria-hidden="true">folder_zip</span></button>
           <button class="button button-outlined button-lg" type="button" id="import-button" aria-label="Import" title="Import: save every song to the server in the background as it's found (any size, and the page can be closed)" data-server-only hidden><span class="icon" aria-hidden="true">playlist_add</span><span class="import-label"> Import</span></button>
           <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon" aria-hidden="true">fact_check</span> Upload and scan</button>
@@ -118,6 +120,7 @@
                 <dt>Size</dt><dd data-bind="size">48.6 MB</dd>
                 <dt>From</dt><dd class="text-truncate" data-bind-source>Soulseek</dd>
                 <dt>File</dt><dd class="text-mono text-truncate" data-bind="filename">The Quiet Harbor - Paper Lanterns.flac</dd>
+                <dt data-dj-only hidden>For CDJs</dt><dd data-dj-only hidden data-bind="dj">WAV 24-bit / 48 kHz</dd>
               </dl>
             </div>
           </div>

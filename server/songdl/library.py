@@ -14,6 +14,10 @@ Searches, scans and imports look here before any source the visitor picked
 or came from one of their sources; the earliest of those in the visitor's
 order wins. A copy handed out again is hard-linked into a new download folder,
 which takes no extra space, and its clock for deletion starts over.
+
+DJ mode's copies (dj.py) are written down too, marked `dj`, so the same file is
+never converted twice, but they are never handed out as originals: a WAV
+decoded from YouTube's Opus is no WAV from Soulseek.
 """
 
 import asyncio
@@ -72,6 +76,7 @@ class Library:
         self.file = cfg.data_dir / 'library.json'
         self.songs = {}     # path -> record (a dict, as saved)
         self.index = {}     # word -> paths whose record has it
+        self.dj = {}        # dj.source_key of an original -> path of its CDJ copy
         self.dirty = False
         self.refreshed = 0
 
@@ -90,6 +95,9 @@ class Library:
         rec['words'] = sorted(words(' '.join(
             str(rec.get(k) or '') for k in ('artist', 'title', 'album', 'name', 'query'))) - FORMAT_WORDS)
         self.songs[path] = rec
+        # Only a copy in a download folder can be served again (a link to it in an admin's folder can't)
+        if isinstance(rec.get('dj'), str) and STAGING.match(Path(path).parent.name):
+            self.dj[rec['dj']] = path
         for w in rec['words']:
             self.index.setdefault(w, set()).add(path)
         self.dirty = True
@@ -97,6 +105,8 @@ class Library:
     def _drop(self, path):
         rec = self.songs.pop(path, None)
         if rec:
+            if self.dj.get(rec.get('dj')) == path:
+                del self.dj[rec['dj']]
             for w in rec['words']:
                 paths = self.index.get(w)
                 if paths:
@@ -125,6 +135,29 @@ class Library:
             'origin': origin, 'name': name, 'from': who, 'link': link, 'query': query or '',
             'added': time.time(),
         })
+
+    def add_dj(self, path: Path, title, artist, album, key, label):
+        """Writes down a CDJ copy made by dj.py from the file `key` (dj.source_key) names. Only
+        ever looked up by that key (dj_copy), never by find()."""
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return
+        fmt = AUDIO.get(path.suffix.lower(), 'wav')
+        self._put({
+            'path': str(path), 'title': title or '', 'artist': artist or '', 'album': album or '',
+            'fmt': fmt, 'size': size, 'length': None, 'bit_depth': None, 'sample_rate': None, 'bitrate': None,
+            'origin': None, 'name': path.name, 'from': None, 'link': None, 'query': '', 'added': time.time(),
+            'dj': key, 'dj_label': label,
+        })
+
+    def dj_copy(self, key):
+        """(path, label) of the CDJ copy made from the file `key` names, if it's still here and in
+        one of the download folders (which are served), else None."""
+        path = self.dj.get(key)
+        if not path or not os.path.isfile(path):
+            return None
+        return Path(path), self.songs[path].get('dj_label') or ''
 
     def load(self):
         try:
@@ -205,6 +238,8 @@ class Library:
         hits = []
         for path in paths:
             rec = self.songs[path]
+            if rec.get('dj'):
+                continue   # made for DJ mode, not as it came
             step = _step(rec)
             if step not in order:
                 continue

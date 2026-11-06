@@ -4,7 +4,9 @@ Unlike a download for the browser, a queued song doesn't depend on anyone
 keeping a page open. The queue is written to disk and picked up again after a
 restart. Each item is one song in one format and ends up as
 <server folder>/<folder>/Artist - Title.ext, the server folder
-being the downloads folder unless downloads.server_folder is set.
+being the downloads folder unless downloads.server_folder is set. In DJ mode
+the song is made CDJ-ready first (dj.py), and a playlist's songs go in a folder
+of their own, "<playlist> (DJ)", so the folder holds only files a CDJ plays.
 
 Statuses: queued, downloading, paused, cancelled, failed, done.
 """
@@ -33,6 +35,8 @@ TICK_SECONDS = 2
 MAX_ITEMS = 25_000       # a couple of big playlist imports, with room to spare
 MAX_FOLDER = 120
 MAX_DEPTH = 4
+DJ_FOLDER = ' (DJ)'      # after a playlist's name, for its CDJ copies
+DJ_EXTENSIONS = ('.wav', '.mp3')
 
 ACTIVE = ('queued', 'downloading')
 STOPPABLE = ('queued', 'downloading', 'paused')
@@ -67,9 +71,15 @@ def playlist_folder(name):
     return name
 
 
+def dj_folder(name):
+    """The folder for a playlist's CDJ copies: "Road Trip" -> "Road Trip (DJ)"."""
+    return playlist_folder(name)[:MAX_FOLDER - len(DJ_FOLDER)].rstrip(' .') + DJ_FOLDER
+
+
 class QueueItem:
-    def __init__(self, entry_id, cands, title, artist, album, fmt, folder, by):
+    def __init__(self, entry_id, cands, title, artist, album, fmt, folder, by, dj=False):
         self.id = entry_id
+        self.dj = dj   # saved as a CDJ copy (dj.py)
         self.cands = cands
         self.title, self.artist, self.album = title, artist, album
         self.format = fmt
@@ -97,6 +107,7 @@ class QueueItem:
             'title': self.title,
             'artist': self.artist,
             'format': matching.LABELS[self.format],
+            'dj': self.dj,
             'source': self.source,
             'folder': self.folder + '/' if self.folder else '',
             'by': self.by,
@@ -112,7 +123,7 @@ class QueueItem:
     def to_dict(self):
         return {
             'id': self.id, 'title': self.title, 'artist': self.artist, 'album': self.album,
-            'format': self.format, 'folder': self.folder, 'by': self.by, 'status': self.status,
+            'format': self.format, 'folder': self.folder, 'by': self.by, 'status': self.status, 'dj': self.dj,
             'size': self.size, 'note': self.note, 'created': self.created, 'finished': self.finished,
             # A finished song never needs its copies again
             'cands': [] if self.status == 'done' else [c.to_dict() for c in self.cands[:KEPT_COPIES]],
@@ -121,7 +132,7 @@ class QueueItem:
     @classmethod
     def from_dict(cls, d):
         item = cls(d['id'], [matching.Candidate.from_dict(c) for c in d.get('cands') or []], d['title'], d['artist'],
-                   d.get('album') or '', d['format'], d['folder'], d['by'])
+                   d.get('album') or '', d['format'], d['folder'], d['by'], bool(d.get('dj')))
         item.status, item.size, item.note = d['status'], d.get('size'), d.get('note') or ''
         item.created, item.finished = d['created'], d.get('finished')
         if item.status == 'done':
@@ -141,18 +152,19 @@ class ServerQueue:
 
     # Adding and controlling
 
-    def add(self, entries, folder, by):
-        """Queues the entries (jobs.Entry) for the folder. Returns (queued, skipped)."""
+    def add(self, entries, folder, by, dj=False):
+        """Queues the entries (jobs.Entry) for the folder, as CDJ copies with `dj`. Returns
+        (queued, skipped)."""
         folder = normalize_folder(folder)
         self.dest_dir(folder)   # refuses anything that would leave the downloads folder
         if len(self.items) + len(entries) > MAX_ITEMS:
             raise UserError('The queue is full. Clear some finished songs first.', 409)
-        busy = {(i.label.lower(), i.format, i.folder) for i in self.items.values() if i.status != 'done'}
+        busy = {(i.label.lower(), i.format, i.folder, i.dj) for i in self.items.values() if i.status != 'done'}
         queued = skipped = 0
         for entry in entries:
             item = QueueItem(uuid.uuid4().hex, list(entry.cands[:KEPT_COPIES]), entry.title, entry.artist,
-                             entry.album, entry.fmt, folder, by)
-            key = (item.label.lower(), item.format, folder)
+                             entry.album, entry.fmt, folder, by, dj)
+            key = (item.label.lower(), item.format, folder, dj)
             if key in busy:
                 skipped += 1
                 continue
@@ -252,11 +264,11 @@ class ServerQueue:
         root = self.cfg.server_folder
         return root.joinpath(*folder.split('/')) if folder else root
 
-    def folder_for(self, playlist):
-        """The folder for a playlist's songs (playlist_folder). When the downloads folder
+    def folder_for(self, playlist, dj=False):
+        """The folder for a playlist's songs (playlist_folder, or dj_folder for its CDJ copies). When the downloads folder
         sits inside the server folder (music/downloads), a playlist named after it gets
         another name, so its songs never land among the visitors' downloads."""
-        folder = base = playlist_folder(playlist)
+        folder = base = dj_folder(playlist) if dj else playlist_folder(playlist)
         n = 1
         while self._is_downloads(self.dest_dir(folder)):
             n += 1
@@ -318,19 +330,26 @@ class ServerQueue:
         try:
             dest = self.dest_dir(item.folder)
             await asyncio.to_thread(dest.mkdir, parents=True, exist_ok=True)
-            have = await asyncio.to_thread(_existing, dest, stem, matching.EXTENSIONS[item.format])
+            # A DJ folder only ever gets CDJ copies, so any WAV or MP3 of the song there is one
+            exts = DJ_EXTENSIONS if item.dj else matching.EXTENSIONS[item.format]
+            have = await asyncio.to_thread(_existing, dest, stem, exts)
             if have:
                 self._finish(item, f'Already in the folder as {have}')
                 return
             if self.engine.low_disk():
                 raise UserError(LOW_DISK)
             fetch = await self.engine.download(item.cands, update)
-            name = await asyncio.to_thread(_save_to, fetch.path, dest, stem)
-            self.engine.library.add(dest / name, item.title, item.artist, item.album, fetch.cand)
-            if not fetch.observers:
-                await asyncio.to_thread(self.engine.forget, fetch)
-            item.size = fetch.cand.size
-            self._finish(item, f'Saved as {name}')
+            if item.dj:
+                name, label = await self._save_dj(item, fetch, dest, stem, update)
+                note = f'Saved as {name} ({label})'
+            else:
+                name = await asyncio.to_thread(_save_to, fetch.path, dest, stem)
+                self.engine.library.add(dest / name, item.title, item.artist, item.album, fetch.cand)
+                if not fetch.observers:
+                    await asyncio.to_thread(self.engine.forget, fetch)
+                note = f'Saved as {name}'
+            item.size = (await asyncio.to_thread((dest / name).stat)).st_size
+            self._finish(item, note)
             log.info('saved %s', dest / name)
             self.engine.schedule_rescan()
         except asyncio.CancelledError:
@@ -346,6 +365,19 @@ class ServerQueue:
         except Exception:
             log.exception('%r crashed', item.label)
             self._fail(item, 'Something went wrong on the server')
+
+    async def _save_dj(self, item, fetch, dest, stem, update):
+        """Saves the CDJ copy of a finished download in the folder. The original stays in its
+        download folder, where it's handed out again like any visitor's (and deleted in time)."""
+        update(1.0, None, 'Making it CDJ-ready')
+        self.engine.library.add(fetch.path, item.title, item.artist, item.album, fetch.cand)
+        copy = await self.engine.dj.copy(fetch.path, stem, item.title, item.artist, item.album)
+        name = await asyncio.to_thread(_save_to, copy.path, dest, stem)
+        if copy.made:
+            self.engine.library.add_dj(dest / name, item.title, item.artist, item.album, True, copy.label)
+        else:   # the original itself (a CBR MP3), so it's a copy like any other
+            self.engine.library.add(dest / name, item.title, item.artist, item.album, fetch.cand)
+        return name, copy.label
 
     def _finish(self, item, note):
         item.status, item.progress, item.speed, item.note = 'done', 1.0, None, note

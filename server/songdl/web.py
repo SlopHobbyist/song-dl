@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import imports, jobs, matching, playlist, spotify, turnstile, youtube
+from . import dj, imports, jobs, matching, playlist, spotify, turnstile, youtube
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -214,6 +214,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'adminEnabled': auth.enabled,
             'turnstileSiteKey': cfg.turnstile_site_key or None,
             'serverFolder': cfg.server_folder.name or 'downloads',
+            'djMode': await asyncio.to_thread(dj.available),   # ffmpeg is here to make CDJ copies
         })
 
     async def login(request):
@@ -346,7 +347,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
 
     async def start_download(request):
         data = await read_json(request)
-        job = await manager.start_download(data.get('result'), client_ip(request))
+        job = await manager.start_download(data.get('result'), client_ip(request), data.get('dj') is True)
         return web.json_response({'id': job.id})
 
     async def poll_downloads(request):
@@ -446,9 +447,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         entries = [manager.entry(i) for i in ids]
         if any(e.source == 'soulseek' for e in entries):
             await manager.engine.check_connected()
-        folder = queue.folder_for(data['playlist']) if 'playlist' in data else data.get('folder')
-        queued, skipped = queue.add(entries, folder, user)
-        log.info('%s queued %d song(s) in %r', user, queued, folder)
+        dj = data.get('dj') is True
+        folder = queue.folder_for(data['playlist'], dj) if 'playlist' in data else data.get('folder')
+        queued, skipped = queue.add(entries, folder, user, dj)
+        log.info('%s queued %d song(s) in %r%s', user, queued, folder, ' for DJs' if dj else '')
         return web.json_response({'queued': queued, 'skipped': skipped, 'folder': normalize_folder(folder)})
 
     def queue_action(action):
@@ -474,8 +476,9 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     # Playlist imports (admins only)
 
     async def add_import(request):
-        """{csv, type, name, formats, folder}: the whole playlist, searched in the background.
-        type 'text' means csv holds a plain text list, one song per line."""
+        """{csv, type, name, formats, folder or playlist, dj}: the whole playlist, searched in the
+        background. type 'text' means csv holds a plain text list, one song per line; dj saves
+        CDJ copies (dj.py)."""
         user = require_admin(request)
         data = await read_json(request, MAX_IMPORT)
         text = data.get('csv')
@@ -489,8 +492,9 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'That playlist has {n} songs. An import can have up to {limit}; split it into smaller files.')
         name = ' '.join(str(data.get('name') or '').split())[:120]
         name = re.sub(r'\.(?:csv|txt)$', '', name, flags=re.I) or 'Playlist'
-        folder = queue.folder_for(data['playlist']) if 'playlist' in data else data.get('folder')
-        imp = importer.add(name, formats, folder, user, tracks, skipped, sources)
+        dj = data.get('dj') is True
+        folder = queue.folder_for(data['playlist'], dj) if 'playlist' in data else data.get('folder')
+        imp = importer.add(name, formats, folder, user, tracks, skipped, sources, dj)
         return web.json_response(imp.view())
 
     async def list_imports(request):

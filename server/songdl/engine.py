@@ -20,7 +20,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import matching, soundcloud_audio, youtube_audio
+from . import dj, matching, soundcloud_audio, youtube_audio
 from .library import Library
 from .errors import UserError
 from .slskd import Slskd, SlskdError
@@ -155,6 +155,7 @@ class Engine:
         # Where to look when Soulseek doesn't have a song, by source name (matching.SOURCES)
         self.elsewhere = {'soundcloud': self.soundcloud, 'youtube': self.youtube}
         self.library = Library(cfg)   # songs already here, looked at before any of those
+        self.dj = dj.Converter(cfg, self.library)   # DJ mode's CDJ-ready copies
 
     def spawn(self, coro):
         task = asyncio.create_task(coro)

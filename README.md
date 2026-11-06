@@ -1,27 +1,27 @@
-> Untested don't use yet
+> Last tested working 11/06/2026
 
 # Song-DL
 
-A simple web interface for downloading music off of Soulseek.
+A simple web interface for downloading music off of Soulseek, SoundCloud, or YouTube.
 
 ## About
 
-This is a website for downloading music. It grabs songs from the Soulseek network using Slskd. Type a song name, and it'll find the highest quality version available. If Soulseek doesn't have it, it can fall back to SoundCloud, then the best audio on YouTube. Using CSV files, plain text files (one song per line), or by pasting a Spotify or YouTube playlist link, you can download playlists too. If you have a NAS, Admins can choose to download to the server instead.
+This is a website for downloading music. It grabs songs from the Soulseek network using [slskd](https://github.com/slskd/slskd). Type a song name, and it'll find the highest quality version available. If it's not on Soulseek, it'll try SoundCloud then YouTube. You can also search by pasting playlist links, or uploading txt/csv files. If you have a NAS, admins can choose to download to the server instead.
 
 ## Differentiators
 
 - Easy for noobs, simply search then download
-- We filter out crap like remix, live versions, and files labeled "PRIVATE"
+- We filter out crap like files labeled "PRIVATE", and remixes+live versions when you didn't search for them 
 - Auto retries a different uploader if slow or stuck
-- Optional captcha solver for direct messages
-- Can paste Spotify and YouTube links to grab song lists automatically
-- Checks SoulSeek, then SoundCloud, then YouTube. Can change order in sources menu.
+- Optional direct message captcha solver
+- Sync Spotify and YouTube playlists locally
+- DJ mode for ensuring songs can play on any CDJ/XDJs
 
 ### Limitations
 - Soulseek limits searches to 34 every 220 seconds. Some stuff may take a while.
 - If YouTube or SoundCloud scanning or downloading breaks, do `docker compose build --pull --no-cache app` to force `yt-dlp` to update.
-- YouTube audio is lossy (usually Opus around 130 kbps, sometimes AAC in `.m4a`) and is never converted, whatever formats are ticked. Some DJ software can't play Opus.
-- SoundCloud audio is AAC in `.m4a`, usually 160 kbps, sometimes 96. Tracks under DRM (most major-label uploads) and Go+ previews are skipped, and so are edits, flips and mashups unless you search for one. An uploader's original file needs a SoundCloud account, so it isn't used.
+- YouTube audio is lossy (usually Opus around 130 kbps, sometimes AAC in `.m4a`) and is never converted, whatever formats are ticked, unless DJ mode is on. Some DJ software can't play Opus.
+- SoundCloud audio is AAC in `.m4a`, usually 160 kbps, sometimes 96. Tracks under DRM (most major-label uploads) and Go+ previews are skipped, and so are edits, flips and mashups unless you search for one.
 
 ## Page List
 
@@ -40,23 +40,29 @@ Server at `./server/songdl/`
 You need `git` and `docker` first.
 
 1. `git clone https://github.com/SlopHobbyist/song-dl`
-2. Copy `./config.yaml.example` to `./config.yaml` and edit
-3. `sudo docker compose up -d`
+2. Copy `config.yaml.example` to `config.yaml` and edit it
+3. `docker compose up -d --build` to run
+4. `docker compose down` to stop
+
+Some Linux systems require `sudo docker` instead of just `docker`.
+
+### Config
+Copy `config.yaml.example` to `config.yaml` and edit before starting for the first time.
+
+Type your Soulseek credentials, and admin credentials for the webui.
+
+Optional turnstile `site_key` and `secret_key` go here too.
+
+Behind Cloudflare or reverse proxies, set `webserver.trust_proxy: true`.
 
 Files go to `./downloads` by default. Files by users not logged in deleted after `max_file_age` days. Admin downloaded stuff stays forever.
 
-Behind Cloudflare or another reverse proxy, set `webserver.trust_proxy: true` so rate limits and login lockouts
-see each visitor's own IP.
+### Captcha Solver
+Some Soulseek users use an extension to force downloaders to solve a text captcha in their direct messages. We can get around this.
 
-## Config
-Copy `./config.yaml.example` to `./config.yaml` and edit before starting for the first time.
-Make soulseek credentials, and admin credentials for the webui. Or leave the example ones, and random ones get saved into `config.yaml` on first start. Turnstile keys are put here too.
+Optional captcha solver enabled with `captcha.enabled: True` in `config.yaml`.
 
-Captcha solver is off by default. To turn it on, set `captcha.enabled: True` and start with `sudo docker compose --profile captcha up -d`. First start downloads a ~1 GB model into `./models`.
-
-### Rebuilding and starting
-- Regular build with `sudo docker compose up -d --build`
-- Build and update the downloaders with `sudo docker compose build --pull --no-cache app` then `sudo docker compose up -d`
+Run `sudo docker compose --profile captcha up -d` to download the 1GB LLM.
 
 ## Development
 
@@ -68,7 +74,7 @@ python -m venv .venv
 .venv/bin/python -m pytest
 ```
 
-Tests run whole server against `server/tests/fake_slskd.py`. Just site can be tested without soulseek too:
+Tests run whole server against `server/tests/fake_slskd.py`. Just site can be tested without Soulseek too:
 
 ```
 cd server

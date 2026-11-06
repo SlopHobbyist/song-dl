@@ -71,8 +71,9 @@ class ImportTrack:
 
 
 class Import:
-    def __init__(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',)):
+    def __init__(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',), dj=False):
         self.id = secrets.token_urlsafe(9)
+        self.dj = dj                   # songs are saved as CDJ copies (dj.py)
         self.name = name
         self.formats = formats
         self.sources = list(sources)
@@ -126,6 +127,7 @@ class Import:
             'sources': [SOURCE_LABELS[s] for s in self.sources],
             'folder': self.folder + '/' if self.folder else '',
             'by': self.by,
+            'dj': self.dj,
             'state': self.state,
             'note': self.note,
             'total': len(self.tracks),
@@ -166,7 +168,7 @@ class Import:
 
     def to_dict(self):
         return {'id': self.id, 'name': self.name, 'formats': self.formats, 'sources': self.sources,
-                'folder': self.folder, 'by': self.by,
+                'folder': self.folder, 'by': self.by, 'dj': self.dj,
                 'state': self.state, 'note': self.note, 'created': self.created, 'finished': self.finished,
                 'skipped': self.skipped, 'tracks': [t.to_list() for t in self.tracks]}
 
@@ -174,7 +176,7 @@ class Import:
     def from_dict(cls, d):
         imp = cls(d['name'], d['formats'], d['folder'], d['by'],
                   [ImportTrack.from_list(r) for r in d['tracks']], d.get('skipped', 0),
-                  d.get('sources') or ('soulseek',))
+                  d.get('sources') or ('soulseek',), bool(d.get('dj')))
         imp.id, imp.state, imp.note = d['id'], d['state'], d.get('note') or ''
         imp.created, imp.finished = d['created'], d.get('finished')
         return imp
@@ -194,14 +196,14 @@ class Importer:
 
     # Adding and controlling
 
-    def add(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',)):
+    def add(self, name, formats, folder, by, tracks, skipped=0, sources=('soulseek',), dj=False):
         folder = normalize_folder(folder)
         self.queue.dest_dir(folder)   # refuses anything that would leave the downloads folder
         if len(tracks) > MAX_TRACKS:
             raise UserError(f'That playlist has {len(tracks)} songs. An import can have up to {MAX_TRACKS}.')
         if sum(i.state in ('running', 'paused') for i in self.imports.values()) >= MAX_IMPORTS:
             raise UserError('There are too many imports going. Let some finish or delete them first.', 409)
-        imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped, sources)
+        imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped, sources, dj)
         self.imports[imp.id] = imp
         self._trim()
         self._changed()
@@ -359,7 +361,7 @@ class Importer:
                 continue
             entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
             try:
-                self.queue.add([entry], imp.folder, imp.by)
+                self.queue.add([entry], imp.folder, imp.by, imp.dj)
             except UserError as e:
                 # The queue is full, say: stop until someone makes room
                 self._pause(imp, t, e)
@@ -379,7 +381,7 @@ class Importer:
         step = c.fmt if c.fmt in imp.formats and c.origin not in matching.ELSEWHERE else c.origin
         entry = Entry(cands, c.fmt, t.track.title, t.track.artist, t.track.album)
         try:
-            self.queue.add([entry], imp.folder, imp.by)
+            self.queue.add([entry], imp.folder, imp.by, imp.dj)
         except UserError as e:
             self._pause(imp, t, e)
             return False
@@ -404,7 +406,7 @@ class Importer:
             return True
         entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album)
         try:
-            self.queue.add([entry], imp.folder, imp.by)
+            self.queue.add([entry], imp.folder, imp.by, imp.dj)
         except UserError as e:
             self._pause(imp, t, e)
             return False

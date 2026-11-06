@@ -113,7 +113,54 @@
   function playlistFolder(name) {
     var folder = String(name || '').replace(/[\\\/:*?"<>|\x00-\x1f]+/g, '-')
       .replace(/\s+/g, ' ').replace(/^[ .]+|[ .]+$/g, '').slice(0, 120).replace(/[ .]+$/, '');
-    return folder || 'Playlist';
+    folder = folder || 'Playlist';
+    /* DJ mode's copies go in a folder of their own (server_queue.dj_folder) */
+    return djMode() ? folder.slice(0, 115).replace(/[ .]+$/, '') + ' (DJ)' : folder;
+  }
+
+  /* ------------------------------------------------------------ DJ mode
+     Every song is made into a file any CDJ plays (server/songdl/dj.py) before
+     it reaches this device or the server's folder. On or off for searches,
+     scans and imports alike; remembered in this browser. The button only shows
+     once the server says it can (it needs ffmpeg). */
+
+  var djAvailable = false;
+  var djHooks = [];   // called when it's turned on or off
+
+  function djMode() {
+    if (!djAvailable) return false;
+    try { return localStorage.getItem('songdl-dj') === 'on'; } catch (e) { return false; }
+  }
+
+  function applyDj() {
+    var on = djMode();
+    $$('[data-dj-button]').forEach(function (button) {
+      button.hidden = !djAvailable;
+      button.setAttribute('aria-pressed', String(on));
+      button.title = 'DJ mode';
+      button.setAttribute('aria-label', 'DJ mode: ' + (on ? 'on, files are made CDJ-ready' : 'off'));
+    });
+    $$('[data-dj-only]').forEach(function (el) { el.hidden = !on; });
+    djHooks.forEach(function (hook) { hook(on); });
+    if (applyDelivery) applyDelivery();
+  }
+
+  function showDj() {
+    djAvailable = true;
+    applyDj();
+  }
+
+  function initDj() {
+    $$('[data-dj-button]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var on = !djMode();
+        try { localStorage.setItem('songdl-dj', on ? 'on' : 'off'); } catch (e) {}
+        applyDj();
+        toast(on ? 'DJ mode on: songs come as WAV (or CBR MP3) that every CDJ plays' : 'DJ mode off',
+          on ? 'success' : undefined);
+      });
+    });
+    applyDj();
   }
 
   /* A button that is busy keeps keyboard focus (aria-disabled, not disabled)
@@ -207,6 +254,7 @@
     if (page === 'login') return;
     api('GET', '/api/session').then(function (session) {
       if (session.serverFolder) serverRoot = session.serverFolder + '/';
+      if (session.djMode) showDj();
       /* Signed in? The home page gets the admin navigation in place of the sign-in
          button, and Download as can save to the server. Every admin page shows the
          count of active downloads (the Downloads page keeps its own). */
@@ -798,7 +846,7 @@
       while (next < resultIds.length) {
         var i = next++;
         try {
-          var started = await api('POST', '/api/download', { result: resultIds[i] });
+          var started = await api('POST', '/api/download', { result: resultIds[i], dj: djMode() });
           var view;
           for (;;) {
             var res = await api('GET', '/api/downloads?id=' + encodeURIComponent(started.id));
@@ -916,7 +964,7 @@
 
   /* Saves results on the server (admins), in a folder named after the playlist. */
   async function queueResults(ids, label, playlist) {
-    var res = await api('POST', '/api/queue', { playlist: playlist, results: ids });
+    var res = await api('POST', '/api/queue', { playlist: playlist, results: ids, dj: djMode() });
     if (res.queued) {
       toast('Saving ' + label + ' to ' + serverRoot + res.folder + '/. Follow along on Downloads.', 'success');
     } else {
@@ -954,6 +1002,7 @@
       bind('quality', found.length === 1 ? found[0].quality : found.map(function (r) { return r.format + ' ' + r.quality; }).join(' · '));
       bind('size', formatSize(sumSizes(found)));
       bind('filename', found.map(function (r) { return r.filename; }).join(', '));
+      bind('dj', found[0].dj || 'WAV');
       var source = found[0].source;
       var where = SOURCE_NAMES[source] || 'Soulseek';
       var elsewhere = source !== 'soulseek';
@@ -1145,6 +1194,8 @@
       button.innerHTML = '<span class="icon icon-sm" aria-hidden="true">' + (server ? 'playlist_add' : 'download') + '</span>';
     }
 
+    /* DJ mode names the server folder in the summary */
+    djHooks.push(function () { if (scan && scan.job && !isBusy(allButton)) updateSummary(scan.job); });
     /* Download as changed: rows not yet done, and Download all, follow it */
     deliveryHooks.push(function () {
       if (!scan || !scan.job) return;
@@ -1562,7 +1613,8 @@
           name: linked ? linked.name : file.name,
           formats: formats,
           sources: chosenSources(),
-          playlist: linked ? linked.name : playlistName(file.name)
+          playlist: linked ? linked.name : playlistName(file.name),
+          dj: djMode()
         });
         toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder + '. Follow along on Downloads.', 'success');
         if (refreshImports) await refreshImports();
@@ -1628,7 +1680,8 @@
   function updateImport(el, imp) {
     setText($('[data-name]', el), imp.name);
     $('[data-name]', el).title = imp.name;
-    setText($('[data-where]', el), lookedFor(imp.formats, imp.sources) + ' · ' + serverRoot + imp.folder + ' · by ' + imp.by);
+    setText($('[data-where]', el), lookedFor(imp.formats, imp.sources) + (imp.dj ? ' · DJ' : '') + ' · ' +
+      serverRoot + imp.folder + ' · by ' + imp.by);
 
     var signature = imp.state + '|' + imp.missing + '|' + imp.queued + '|' + imp.found;
     if (el.getAttribute('data-signature') !== signature) {
@@ -1808,7 +1861,8 @@
       switch (col) {
         case 'song':
           return '<td class="cell-song"><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(item.title) + '</span>' +
-            '<span class="text-caption text-muted">' + escapeHtml((item.artist ? item.artist + ' · ' : '') + item.format) + '</span></div></td>';
+            '<span class="text-caption text-muted">' + escapeHtml((item.artist ? item.artist + ' · ' : '') + item.format +
+              (item.dj ? ' · DJ' : '')) + '</span></div></td>';
         case 'folder':   return '<td class="hide-sm text-mono">' + escapeHtml(serverRoot + item.folder) + '</td>';
         case 'by':       return '<td class="hide-lg">' + escapeHtml(item.by) + '</td>';
         case 'status':   return '<td class="cell-status"></td>';
@@ -2063,6 +2117,7 @@
   initFormats();
   initSources();
   initDelivery();
+  initDj();
   var handOffLink = initPlaylistLink();
   initSearch();
   initScan();

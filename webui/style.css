@@ -265,7 +265,7 @@ main:focus { outline: none; }
   .search-form-row > .row { flex: 1 1 100%; }
   .search-form-row > .row > .button { flex: 1 1 0; white-space: nowrap; padding-inline: var(--space-3); }
   /* ...but the icon-only ones stay square, leaving the room to the ones with words */
-  .search-form-row > .row > :is([data-formats-button], [data-sources-button], [data-delivery-button]) { flex: none; padding-inline: 0; }
+  .search-form-row > .row > :is([data-formats-button], [data-sources-button], [data-delivery-button], [data-dj-button]) { flex: none; padding-inline: 0; }
   /* Import is just its icon on phones, so Upload and scan keeps its words */
   .search-form-row > .row > #import-button { flex: none; width: var(--size-control-lg); padding-inline: 0; }
   #import-button .import-label { display: none; }
@@ -312,7 +312,8 @@ main:focus { outline: none; }
 /* The Formats and Sources buttons are just their icons, square to sit beside the other big buttons */
 [data-formats-button],
 [data-sources-button],
-[data-delivery-button] { width: var(--size-control-lg); padding-inline: 0; flex: none; }
+[data-delivery-button],
+[data-dj-button] { width: var(--size-control-lg); padding-inline: 0; flex: none; }
 
 /* Formats and Sources dialogs: a sortable list, tried top to bottom. The checkbox label fills
    the row so the whole row toggles it; only the handle drags. */
@@ -327,3 +328,11 @@ main:focus { outline: none; }
 
 /* Browser tips in the Download as dialog */
 .delivery-tips { margin: var(--space-2) 0 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* ------------------------------------------------------------ DJ mode
+   An outlined button that stays on: tinted like the current page's link. */
+.button-outlined[aria-pressed="true"] {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-text);
+}
