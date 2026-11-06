@@ -17,7 +17,9 @@ For regular non logged in users.
 
 or
 
-- Upload a playlist's song csv
+- Press the Playlist button to choose a playlist's song csv (or drop the csv anywhere on the page),
+  or paste a Spotify or YouTube playlist link in the search box
+- The playlist panel opens only then, showing the playlist, formats and buttons; Song goes back
 - Press Upload and scan button
 - Shows list of songs, if they were found on the server or not
 - Press Individual Download button or Download All button

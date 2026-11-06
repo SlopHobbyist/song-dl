@@ -67,7 +67,7 @@
       <form class="search-form mt-5" id="search-form" data-panel="search" autocomplete="off">
         <div class="search search-hero">
           <span class="icon" aria-hidden="true">search</span>
-          <input type="search" id="q" name="q" placeholder="Artist | Song Title, or a link" aria-label="Song name, or a playlist or YouTube link">
+          <input type="search" id="q" name="q" placeholder="Artist + Song (or Link)" aria-label="Song name, or a playlist or YouTube link">
         </div>
         <div class="search-form-row">
           <fieldset class="fieldset fieldset-bare">
@@ -81,23 +81,15 @@
           </fieldset>
           <div class="row row-tight">
             <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
-            <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
+            <button class="button button-outlined button-lg" type="button" id="playlist-button" title="Choose a playlist CSV file. To use a Spotify or YouTube playlist, paste its link in the search box."><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
+            <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input" tabindex="-1" aria-hidden="true">
             <button class="button button-filled button-lg" type="submit"><span class="icon" aria-hidden="true">search</span> Search</button>
           </div>
         </div>
       </form>
 
-      <!-- ================================================= Playlist upload -->
+      <!-- ============ Playlist: shown once a CSV is chosen or a playlist link pasted -->
       <div class="search-form mt-5" id="playlist-form" data-panel="playlist" hidden>
-        <div class="file-drop file-drop-compact" data-file-list="csv-list" tabindex="0" role="button" aria-label="Choose a playlist CSV file">
-          <span class="icon" aria-hidden="true">upload_file</span>
-          <span class="text-subtitle">Drag a playlist CSV here, or click to browse</span>
-          <input type="file" accept=".csv,text/csv" class="visually-hidden" id="csv-input">
-        </div>
-        <div class="search playlist-link">
-          <span class="icon" aria-hidden="true">link</span>
-          <input type="url" id="playlist-link" inputmode="url" placeholder="Or paste a Spotify or YouTube playlist link" aria-label="Spotify or YouTube playlist link" autocomplete="off" spellcheck="false">
-        </div>
         <div class="file-list" id="csv-list"></div>
         <div class="search-form-row">
           <fieldset class="fieldset fieldset-bare">
@@ -231,12 +223,22 @@
   </div>
   <div class="dialog-body">
     <fieldset class="fieldset fieldset-bare">
-      <legend class="visually-hidden">Sources</legend>
-      <div class="choice-group">
-        <label class="choice"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek</span></label>
-        <label class="choice"><input type="checkbox" name="source" value="soundcloud" checked><span class="choice-box"></span><span class="choice-label">SoundCloud</span></label>
-        <label class="choice"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube</span></label>
-      </div>
+      <legend class="visually-hidden">Sources, in the order they're tried</legend>
+      <ul class="sortable" data-reorder data-sources-list>
+        <li class="sortable-item" data-source="soulseek">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek</span></label>
+        </li>
+        <li class="sortable-item" data-source="soundcloud">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="soundcloud" checked><span class="choice-box"></span><span class="choice-label">SoundCloud</span></label>
+        </li>
+        <li class="sortable-item" data-source="youtube">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube</span></label>
+        </li>
+      </ul>
+      <p class="visually-hidden" data-reorder-status role="status" aria-live="polite"></p>
     </fieldset>
   </div>
   <div class="dialog-actions">

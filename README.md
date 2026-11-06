@@ -50,9 +50,13 @@ see each visitor's own IP.
 
 ## Config
 Copy `./config.yaml.example` to `./config.yaml` and edit before starting for the first time.
-Make soulseek credentials, and admin credentials for the webui. Or leave the example ones, and random ones get saved into `config.yaml` on first start.
+Make soulseek credentials, and admin credentials for the webui. Or leave the example ones, and random ones get saved into `config.yaml` on first start. Turnstile keys are put here too.
 
 Captcha solver is off by default. To turn it on, set `captcha.enabled: True` and start with `sudo docker compose --profile captcha up -d`. First start downloads a ~1 GB model into `./models`.
+
+### Rebuilding and starting
+- Regular build with `sudo docker compose up -d --build`
+- Build and update the downloaders with `sudo docker compose build --pull --no-cache app` then `sudo docker compose up -d`
 
 ## Development
 

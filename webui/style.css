@@ -84,12 +84,32 @@ main:focus { outline: none; }
 
 .fieldset-bare { border: 0; padding: 0; margin: 0; min-width: 0; background: none; }
 
-.file-drop-compact {
-  flex-direction: row;
-  gap: var(--space-3);
-  height: calc(var(--size-control-lg) + var(--space-3));
-  padding-block: 0;
+/* A file dragged over the window: drop it anywhere to use it as the playlist.
+   pointer-events: none keeps the drag events on the page underneath. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(var(--rgb-surface), .85);
+  pointer-events: none;
 }
+.drop-overlay[hidden] { display: none; }
+.drop-overlay-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  width: 100%;
+  height: 100%;
+  border: 2px dashed var(--color-primary);
+  border-radius: var(--radius-md);
+  color: var(--color-on-surface);
+}
+.drop-overlay-box .icon { color: var(--color-primary); }
 
 .search-sm { height: var(--size-control); max-width: 260px; }
 
@@ -263,7 +283,9 @@ main:focus { outline: none; }
 
 /* Sources dialog: a sortable list, tried top to bottom. The checkbox label fills the row so
    the whole row toggles it; only the handle drags. */
-.sources-hint { margin: 0 0 var(--space-3); }
 [data-sources-list] .sortable-item { padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); }
-[data-sources-list] .choice { cursor: pointer; }
+/* The kit's .choice tops the box and label for multi-line labels; these are one line, so
+   center them on the row like the handle. */
+[data-sources-list] .choice { cursor: pointer; align-items: center; padding-block: 0; }
+[data-sources-list] .choice-box { margin-top: 0; }
 [data-sources-list] .sortable-item:has(input:not(:checked)) .choice-label { color: var(--color-on-surface-muted); }

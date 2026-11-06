@@ -62,34 +62,6 @@
     });
   }).observe(document.body, { childList: true, subtree: true });
 
-  /* The file drop is a div acting as a button: give it the keys a button has. */
-  $$('.file-drop').forEach(function (zone) {
-    zone.addEventListener('keydown', function (event) {
-      if (event.target !== zone) return;
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        zone.click();
-      }
-    });
-    /* The kit lists a dropped file but leaves the input empty; fill it in so
-       the file can be read. */
-    zone.addEventListener('drop', function (event) {
-      var files = event.dataTransfer && event.dataTransfer.files;
-      var input = $('input[type="file"]', zone);
-      if (!files || !files.length || !input) return;
-      try { input.files = files; } catch (e) { return; }
-      announce(files[0].name + ' selected');
-    });
-  });
-  $$('.file-drop input[type="file"]').forEach(function (input) {
-    input.setAttribute('tabindex', '-1');
-    input.setAttribute('aria-hidden', 'true');
-    input.addEventListener('change', function () {
-      var file = input.files && input.files[0];
-      if (file) announce(file.name + ' selected');
-    });
-  });
-
   /* ------------------------------------------------------------ Helpers */
 
   function escapeHtml(text) {
@@ -398,7 +370,7 @@
       announce(title.textContent);
     }
     hideResults();
-    focus = focus || (name === 'playlist' ? $('[data-panel="playlist"] .file-drop') : $('#q'));
+    focus = focus || (name === 'playlist' ? $('#import-button') || $('#scan-button') : $('#q'));
     if (focus) focus.focus();
   }
 
@@ -412,10 +384,11 @@
 
   /* --------------------------------------------------- Playlist links
      A link to a single YouTube video becomes a search for its song.
-     A Spotify or YouTube playlist link, pasted in the song search box or the playlist
-     panel's link field, is read by the server into a CSV of the whole
-     playlist. The CSV then stands in for an uploaded file: it can be saved
-     for later, or scanned like any other. */
+     A Spotify or YouTube playlist link, pasted in the song search box, is read
+     by the server into a CSV of the whole playlist. The CSV then stands in for
+     an uploaded file: it can be saved for later, or scanned like any other.
+     The playlist panel only opens once there is a playlist: a link like that,
+     or a CSV chosen with the Playlist button (or dropped on the search). */
 
   var SPOTIFY_PLAYLIST = /(?:\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:embed\/)?(?:user\/[^\/\s]+\/)?playlist\/|\bspotify:(?:user:[^:\s]+:)?playlist:)[A-Za-z0-9]{22}\b/;
   var SPOTIFY_OTHER = /\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:track|album|artist|episode|show)\//;
@@ -456,21 +429,42 @@
   }
 
   function initPlaylistLink() {
-    var field = $('#playlist-link');
     var list = $('#csv-list');
     var input = $('#csv-input');
-    var zone = $('[data-panel="playlist"] .file-drop');
+    var pick = $('#playlist-button');
     var scanButton = $('#scan-button');
     var importButton = $('#import-button');
     var q = $('#q');
-    if (!field || !list || !scanButton) return;
+    if (!list || !scanButton || !input) return;
 
     function forgetLink() {
       linkRun++;
       linked = null;
-      field.value = '';
       setIdle(scanButton);
       if (importButton) importButton.removeAttribute('aria-disabled');
+    }
+
+    function showFile(file) {
+      list.innerHTML =
+        '<div class="file-item">' +
+          '<span class="icon icon-sm">description</span>' +
+          '<span class="grow text-truncate" title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</span>' +
+          '<span class="text-caption text-muted">' + count(Math.max(1, Math.round(file.size / 1024))) + ' KB</span>' +
+        '</div>';
+    }
+
+    /* A CSV was chosen (or dropped): it replaces any link, and opens the playlist panel */
+    function useFile(file) {
+      if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') {
+        input.value = '';
+        toast('That isn\'t a CSV file. Choose a playlist CSV, or paste a playlist link in the search box.', 'warning');
+        return;
+      }
+      forgetLink();
+      if (q) q.value = '';
+      showFile(file);
+      showPanel('playlist');
+      announce(file.name + ' selected');
     }
 
     function showReading(source) {
@@ -505,8 +499,7 @@
     async function read(url) {
       var run = ++linkRun;
       linked = null;
-      field.value = url;
-      if (input) input.value = '';
+      input.value = '';
       var source = linkSource(url);
       showReading(source);
       setBusy(scanButton, 'Reading playlist');
@@ -529,7 +522,7 @@
         if (importButton) importButton.removeAttribute('aria-disabled');
         announce(res.name + ': ' + res.total + ' songs. Ready to ' + (importButton ? 'import or scan' : 'scan') +
           ', or download the CSV.');
-        (importButton || scanButton).focus();
+        if (!scanButton.closest('[data-panel]').hidden) (importButton || scanButton).focus();
       } catch (e) {
         if (run !== linkRun) return;
         list.innerHTML = '';
@@ -572,7 +565,6 @@
         return true;
       }
       if (YOUTUBE_VIDEO.test(text)) {
-        if (!fromSearch) field.value = '';
         searchVideo(text);
         return true;
       }
@@ -594,23 +586,65 @@
       });
     }
 
-    field.addEventListener('paste', function () {
-      setTimeout(function () { tryLink(field.value); }, 0);
-    });
-    field.addEventListener('keydown', function (event) {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      if (!field.value.trim()) return;
-      if (!tryLink(field.value, false)) toast('That isn\'t a Spotify or YouTube playlist link, or a YouTube video link.', 'warning');
-    });
-    field.addEventListener('change', function () {
-      if (isPlaylistLink(field.value)) tryLink(field.value);
+    /* The Playlist button opens the file picker */
+    if (pick) pick.addEventListener('click', function () { input.click(); });
+    input.addEventListener('change', function () {
+      if (input.files && input.files.length) useFile(input.files[0]);
     });
 
-    /* Choosing a file replaces the link */
-    if (input) input.addEventListener('change', function () { if (input.files.length) forgetLink(); });
-    if (zone) zone.addEventListener('drop', function (event) {
-      if (event.dataTransfer && event.dataTransfer.files.length) forgetLink();
+    /* A CSV dragged anywhere onto the page is used like a chosen one. While a
+       file is over the window, an overlay says so. It ignores the pointer, so
+       the drag events still land on the page underneath; dragenter and
+       dragleave come in pairs per element, so a count says when the drag has
+       left the window. */
+    function hasFiles(event) {
+      return event.dataTransfer && Array.prototype.indexOf.call(event.dataTransfer.types || [], 'Files') > -1;
+    }
+    var overlay = document.createElement('div');
+    overlay.className = 'drop-overlay';
+    overlay.hidden = true;
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.innerHTML = '<div class="drop-overlay-box"><span class="icon icon-lg">upload_file</span>' +
+      '<span class="text-heading-3">Drop a playlist CSV</span></div>';
+    document.body.appendChild(overlay);
+    var dragDepth = 0;
+    function endDrag() { dragDepth = 0; overlay.hidden = true; }
+
+    window.addEventListener('dragenter', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth++;
+      overlay.hidden = false;
+    });
+    window.addEventListener('dragover', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    });
+    window.addEventListener('dragleave', function (event) {
+      if (!hasFiles(event)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) overlay.hidden = true;
+    });
+    window.addEventListener('dragend', endDrag);
+    window.addEventListener('drop', function (event) {
+      endDrag();
+      if (!hasFiles(event)) return;
+      event.preventDefault();   // else the browser opens the file in place of the page
+      var files = event.dataTransfer.files;
+      if (!files.length) return;
+      try { input.files = files; } catch (e) { /* the File is still used below */ }
+      useFile(files[0]);
+    });
+
+    /* Going back to the song search drops a playlist still being read. A read
+       one is kept, so pasting the same link again doesn't read it twice; the
+       file input is cleared so picking the same file again still works. */
+    $$('[data-show-panel="search"]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!linked) forgetLink();
+        input.value = '';
+      });
     });
 
     list.addEventListener('click', function (event) {
