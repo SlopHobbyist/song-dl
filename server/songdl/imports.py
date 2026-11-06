@@ -30,6 +30,7 @@ import os
 import secrets
 import time
 
+from . import library, matching
 from .engine import IMPORT, SEARCH_WINDOW, SEARCHES_PER_WINDOW, Engine
 from .errors import UserError
 from .jobs import Entry
@@ -310,6 +311,8 @@ class Importer:
 
     async def _search(self, imp: Import, t: ImportTrack):
         try:
+            if not t.found and not self._local(imp, t):
+                return
             for source in imp.sources:
                 if t.found:   # (an import saved by an older version may have one already)
                     break
@@ -354,6 +357,24 @@ class Importer:
                 return False
             t.found.append(fmt)
             return True
+        return True
+
+    def _local(self, imp: Import, t: ImportTrack):
+        """Queues the song from the files already on the server, if a copy there will do (see
+        library.py), so it isn't searched for or downloaded again. False when the import had to stop."""
+        order = library.steps(imp.formats, imp.sources)
+        cands = self.engine.library.find(t.track.query, order, t.track.duration)
+        if not cands:
+            return True
+        c = cands[0]
+        step = c.fmt if c.fmt in imp.formats and c.origin not in matching.ELSEWHERE else c.origin
+        entry = Entry(cands, c.fmt, t.track.title, t.track.artist, t.track.album)
+        try:
+            self.queue.add([entry], imp.folder, imp.by)
+        except UserError as e:
+            self._pause(imp, t, e)
+            return False
+        t.found.append(step)
         return True
 
     def _pause(self, imp, t, e):

@@ -27,7 +27,8 @@ EXTENSIONS = {'wav': ('.wav',), 'aiff': ('.aiff', '.aif'), 'flac': ('.flac',), '
 LABELS = {'wav': 'WAV', 'aiff': 'AIFF', 'flac': 'FLAC', 'mp3': 'MP3', 'opus': 'Opus', 'm4a': 'M4A', 'ogg': 'OGG'}
 LOSSY = {'mp3', 'opus', 'm4a', 'ogg'}
 SOURCES = ('soulseek', 'soundcloud', 'youtube')   # where to look; the visitor picks the order they're tried in
-SOURCE_LABELS = {'soulseek': 'Soulseek', 'soundcloud': 'SoundCloud', 'youtube': 'YouTube'}
+SOURCE_LABELS = {'soulseek': 'Soulseek', 'soundcloud': 'SoundCloud', 'youtube': 'YouTube',
+                 'local': 'this server'}   # a copy already here (library.py): always looked at first, never picked
 ELSEWHERE = SOURCES[1:]   # the ones that aren't Soulseek
 
 
@@ -80,7 +81,8 @@ class Candidate:
     outlier: bool = False
     meta: dict = field(default_factory=dict)
     source: str = 'soulseek'     # or 'soundcloud' / 'youtube': username is then the account or channel, url the track
-    url: str | None = None
+    url: str | None = None       # ...or 'local': a file already on this server, at `filename` (see library.py)
+    origin: str | None = None    # for a local file, where it first came from: 'soulseek', 'soundcloud', 'youtube'
 
     @property
     def key(self):
@@ -158,7 +160,7 @@ class Candidate:
             'bit_depth': self.bit_depth, 'sample_rate': self.sample_rate, 'free_slot': self.free_slot,
             'queue': self.queue, 'speed': self.speed, 'fmt': self.fmt, 'bitrate': self.bitrate,
             'vbr': self.vbr, 'variant': self.variant, 'outlier': self.outlier, 'meta': self.meta,
-            'source': self.source, 'url': self.url,
+            'source': self.source, 'url': self.url, 'origin': self.origin,
         }
 
     @classmethod

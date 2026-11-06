@@ -1,4 +1,5 @@
 aiohttp>=3.12,<4
 PyYAML>=6,<7
 cryptography>=43
+mutagen>=1.47   # tags of songs already on the server (library.py); yt-dlp[default] brings it too
 yt-dlp[default]>=2026.10.26   # YouTube playlists and downloads; YouTube changes often, so rebuild with --pull --no-cache to update

@@ -297,6 +297,7 @@ class ServerQueue:
                 raise UserError(LOW_DISK)
             fetch = await self.engine.download(item.cands, update)
             name = await asyncio.to_thread(_save_to, fetch.path, dest, stem)
+            self.engine.library.add(dest / name, item.title, item.artist, item.album, fetch.cand)
             if not fetch.observers:
                 await asyncio.to_thread(self.engine.forget, fetch)
             item.size = fetch.cand.size

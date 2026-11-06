@@ -149,11 +149,29 @@ main:focus { outline: none; }
 /* ------------------------------------------------------ Scan table */
 .col-index  { width: 48px; }
 .col-action { width: 56px; }
+/* Wide enough for "Downloading 100%", so the columns don't shift as tags change */
+.col-scan-status { width: 176px; }
+.cell-status .tag { white-space: nowrap; }
 .table td.table-numeric.col-index { color: var(--color-on-surface-muted); }
 
 .song-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
 .is-missing .song-cell .text-medium { color: var(--color-on-surface-muted); }
+/* Download all keeps the toolbar's height, so the list below doesn't shrink
+   and grow a scroll bar: the note replaces the summary line (main.js) and the
+   bar runs along the toolbar's bottom edge. The percentage is on the button. */
+.scan-wrap .table-toolbar { position: relative; }
+.scan-wrap .table-toolbar > .grow { flex: 1 1 0; min-width: 0; }
+.scan-wrap [data-fetch-status]:not([hidden]) { display: contents; }
+.scan-wrap [data-fetch-status] .progress-cell { position: absolute; inset: auto 0 0 0; min-width: 0; }
+.scan-wrap [data-fetch-status] .progress-linear { height: 3px; border-radius: 0; }
+.scan-wrap [data-fetch-status] .progress-value { display: none; }
+.is-fetching { background: rgba(var(--rgb-primary), var(--state-hover)); }
+
+/* A downloaded song's check turns back into a download icon on hover */
+[data-redo] [data-again] { display: none; }
+[data-redo]:hover [data-done], [data-redo]:focus-visible [data-done] { display: none; }
+[data-redo]:hover [data-again], [data-redo]:focus-visible [data-again] { display: inline-flex; }
 
 /* ------------------------------------- Homepage: fits the window, no scroll.
    The search panel is centered by two equal spacers; once results arrive
@@ -238,6 +256,9 @@ main:focus { outline: none; }
 
 /* ------------------------------------------------------------ Small */
 @media (max-width: 720px) {
+  /* "SoundCloud" is the widest tag here; downloads show just the percentage */
+  .col-scan-status { width: 120px; }
+  .col-scan-status, .cell-status { padding-inline: var(--space-3); }
   .hero { padding-top: var(--space-7); }
   .result-body { flex-direction: column; }
   .cover { width: 96px; }

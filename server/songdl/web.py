@@ -571,11 +571,13 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             log.warning('webserver.admins is empty: the Server and All pages are turned off')
         queue.load()
         importer.load()
+        manager.engine.library.load()
         await manager.engine.slskd.start()
         tasks = [
             asyncio.create_task(housekeeping(cfg, manager, queue, limiter, auth)),
             asyncio.create_task(queue.run()),
             asyncio.create_task(importer.run()),
+            asyncio.create_task(manager.engine.library.run()),
         ]
         if captcha:
             await captcha.start()
@@ -585,6 +587,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         yield
         importer.shutdown()
         queue.shutdown()
+        manager.engine.library.shutdown()
         for task in tasks:
             task.cancel()
         manager.shutdown()
@@ -646,15 +649,17 @@ async def housekeeping(cfg, manager, queue, limiter, auth):
                 removed = await asyncio.to_thread(delete_old_downloads, cfg.downloads_dir, cfg.max_file_age)
                 if removed:
                     log.info('deleted %d old downloads', removed)
+                    await manager.engine.library.refresh()
                     manager.engine.schedule_rescan()
         except Exception:
             log.exception('housekeeping failed')
 
 
 def delete_old_downloads(root: Path, max_age_days):
-    """Deletes files fetched for the browser once they are old. Only the
-    UUID-named folders slskd saves them in are touched, never the folders
-    admins save songs into."""
+    """Deletes files fetched for the browser once nobody has used them for a while. Only the
+    UUID-named folders slskd saves them in are touched, never the folders admins save songs
+    into. A file handed out again (library.py) is linked, which sets its change time, so
+    that counts as its last use."""
     if max_age_days <= 0 or not root.is_dir():
         return 0
     cutoff = time.time() - max_age_days * 86400
@@ -663,7 +668,8 @@ def delete_old_downloads(root: Path, max_age_days):
         if not folder.is_dir() or not STAGING.match(folder.name):
             continue
         for f in folder.rglob('*'):
-            if f.is_file() and f.stat().st_mtime < cutoff:
+            st = f.stat() if f.is_file() else None
+            if st and max(st.st_mtime, st.st_ctime) < cutoff:
                 f.unlink(missing_ok=True)
                 removed += 1
         for d in sorted((d for d in folder.rglob('*') if d.is_dir()), reverse=True):

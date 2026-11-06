@@ -1,8 +1,11 @@
 """Jobs the browser starts with a POST and then polls: searching for a song,
 scanning a playlist, and fetching a file to hand to the visitor.
 
-Each search or scan looks in the sources the visitor ticked, in the order they
-put them in, and stops at the first that has the song: Soulseek in the first of
+Each search or scan first looks for the song among the files already on the
+server (library.py), whatever the visitor ticked: a copy there in one of their
+formats, or from one of their sources, is handed out again without searching.
+Otherwise it looks in the sources the visitor ticked, in the order they put
+them in, and stops at the first that has the song: Soulseek in the first of
 the visitor's formats it has (they're tried in the order the visitor put them
 in), SoundCloud's best stream, or YouTube's best audio. So each song is found,
 and fetched, in one version only.
@@ -20,7 +23,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from . import matching
+from . import library, matching
 from .engine import LOW_DISK, SCAN, UNREACHABLE, Engine, mb
 from .errors import UserError
 from .playlist import Track
@@ -49,13 +52,14 @@ def file_stem(title, artist=''):
 class Entry:
     """A song in one format that was found: the copies to try, best first."""
 
-    def __init__(self, cands, fmt, title, artist, album=''):
+    def __init__(self, cands, fmt, title, artist, album='', query=None):
         self.id = secrets.token_urlsafe(12)
         self.cands = cands
         self.fmt = fmt
         self.title = title
         self.artist = artist
         self.album = album or ''
+        self.query = query   # what was searched for, if it was a search
         self.used = time.monotonic()
 
     @property
@@ -72,6 +76,11 @@ class Entry:
     def view(self):
         c = self.best
         warning = 'May be a different version of the song' if c.relevance < 2 else None
+        if c.source == 'local':
+            # Says where it first came from; `local` that it's already here
+            source, who, link = c.origin if c.origin in ELSEWHERE else 'soulseek', c.meta.get('from'), c.meta.get('link')
+        else:
+            source, who, link = c.source, c.username if c.source != 'soulseek' else None, c.url
         return {
             'id': self.id,
             'format': matching.LABELS[self.fmt],
@@ -84,9 +93,10 @@ class Entry:
             'size': c.size,
             'filename': f'{file_stem(self.title, self.artist)}{c.ext}',
             'warning': warning,
-            'source': c.source,
-            'from': c.username if c.source != 'soulseek' else None,   # the channel or account
-            'link': c.url,
+            'source': source,
+            'from': who,      # the channel or account
+            'link': link,
+            'local': c.source == 'local',
         }
 
 
@@ -274,15 +284,25 @@ class Manager:
         entry.touch()
         return entry
 
-    def _register(self, cands, fmt, title, artist, album=''):
-        entry = Entry(cands, fmt, title, artist, album)
+    def _register(self, cands, fmt, title, artist, album='', query=None):
+        entry = Entry(cands, fmt, title, artist, album, query)
         self.entries[entry.id] = entry
         return entry
+
+    def _local(self, query, formats, sources, duration=None):
+        """A copy already on the server, as (where it stands in the visitor's order: a format,
+        or 'soundcloud' / 'youtube'; its Candidates), or (None, [])."""
+        order = library.steps(formats, sources)
+        cands = self.engine.library.find(query, order, duration)
+        if not cands:
+            return None, []
+        c = cands[0]
+        return (c.fmt if c.fmt in formats and c.origin not in ELSEWHERE else c.origin), cands
 
     # Search
 
     async def start_search(self, query, formats, sources=('soulseek',), video=None):
-        if 'soulseek' in sources:
+        if 'soulseek' in sources and not self.engine.library.find(query, library.steps(formats, sources)):
             await self.engine.check_connected()
         job = SearchJob(query, formats, sources, video)
         self.searches[job.id] = job
@@ -290,6 +310,18 @@ class Manager:
         return job
 
     async def _search(self, job: SearchJob):
+        step, cands = self._local(job.query, job.formats, job.sources)
+        if cands:
+            m = cands[0].meta
+            entry = self._register(cands, cands[0].fmt, m.get('title') or job.query, m.get('artist') or '',
+                                   m.get('album') or '', job.query)
+            if step in job.formats:
+                job.found[step] = entry
+            else:
+                job.elsewhere = entry
+            job.status = 'Done'
+            job.finish()
+            return
         tried = []
         error = None
         for source in job.sources:
@@ -310,7 +342,7 @@ class Manager:
             if cands:
                 meta = cands[0].meta
                 job.elsewhere = self._register(cands, cands[0].fmt, meta.get('title') or job.query,
-                                               meta.get('artist') or '', meta.get('album') or '')
+                                               meta.get('artist') or '', meta.get('album') or '', job.query)
         if error and not job.found and not job.elsewhere:
             raise error
         job.status = 'Done'
@@ -340,13 +372,14 @@ class Manager:
             meta = best.meta or {}
             job.found[fmt] = self._register(
                 ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
-                meta.get('artist') or '', meta.get('album') or '')
+                meta.get('artist') or '', meta.get('album') or '', job.query)
             return
 
     # Playlist scan
 
     async def start_scan(self, name, formats, tracks, skipped=0, sources=('soulseek',)):
-        if 'soulseek' in sources:
+        if 'soulseek' in sources and not all(
+                self.engine.library.find(t.query, library.steps(formats, sources), t.duration) for t in tracks):
             await self.engine.check_connected()
         if sum(j.state == 'running' for j in self.scans.values()) >= MAX_SCANS:
             raise UserError('Song-DL is busy scanning other playlists right now. Please try again in a few minutes.', 503)
@@ -382,6 +415,10 @@ class Manager:
                     return False
                 st.found[fmt] = self._register(cands, fmt, st.track.title, st.track.artist, st.track.album)
                 return True
+
+        step, cands = self._local(st.track.query, job.formats, job.sources, st.track.duration)
+        if cands:
+            st.found[step] = self._register(cands, cands[0].fmt, st.track.title, st.track.artist, st.track.album)
 
         for source in job.sources:
             if st.found:
@@ -429,6 +466,8 @@ class Manager:
             job.entry.touch()
 
         fetch = await self.engine.download(job.entry.cands, update)
+        e = job.entry
+        self.engine.library.add(fetch.path, e.title, e.artist, e.album, fetch.cand, e.query)
         job.path = fetch.path
         job.name = file_stem(job.entry.title, job.entry.artist) + fetch.path.suffix.lower()
         job.file = f'/files/{fetch.id}/{quote(fetch.path.name)}?as={quote(job.name)}'

@@ -785,7 +785,13 @@
     /* A word for small spaces: the percentage, or what it's waiting on */
     var queued = running.some(function (v) { return /queued/i.test(v.note || ''); });
     var short = progress !== null ? Math.round(progress * 100) + '%' : queued ? 'Queued' : 'Requesting';
-    return { done: done, total: total, progress: progress, speed: speed, note: note, short: short };
+    return { done: done, total: total, progress: progress, speed: speed, note: note, short: short, views: views };
+  }
+
+  /* A status tag for a song being fetched, from a fetchSummary of its files */
+  function fetchTag(summary) {
+    return '<span class="tag tag-info" title="' + escapeHtml(summary.note) + '">' + (summary.progress !== null
+      ? '<span class="hide-sm">Downloading </span>' + escapeHtml(summary.short) : escapeHtml(summary.short)) + '</span>';
   }
 
   /* Fills in a [data-fetch-status] bar from a fetchSummary. */
@@ -875,7 +881,8 @@
       var found = job.results;
       current = job;
       bind('title', job.title || job.query);
-      bind('artist', job.artist || 'Unknown artist');
+      bind('artist', job.artist || '');
+      $('[data-bind="artist"]', result).hidden = !job.artist;
       bind('album', job.album || '—');
       bind('duration', formatDuration(found[0].duration));
       bind('format', found.map(function (r) { return r.format; }).join(' + '));
@@ -886,13 +893,16 @@
       var source = found[0].source;
       var where = SOURCE_NAMES[source] || 'Soulseek';
       var elsewhere = source !== 'soulseek';
-      var tried = triedBefore(job, source);
+      /* A copy already on the server was handed out without searching anywhere */
+      var local = !!found[0].local;
+      var tried = local ? [] : triedBefore(job, source);
       var from = $('[data-bind-source]', result);
-      if (elsewhere) {
-        from.innerHTML = where + ' · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
+      var prefix = local ? 'Already on the server · ' : '';
+      if (elsewhere && found[0].link) {
+        from.innerHTML = escapeHtml(prefix + where) + ' · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
           ' title="Open it on ' + where + '">' + escapeHtml(found[0].from || where) + '</a>';
       } else {
-        from.textContent = 'Soulseek';
+        from.textContent = prefix + where;
       }
 
       /* Formats that weren't found, and copies that may be another version */
@@ -913,6 +923,7 @@
       result.hidden = false;
       var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
         found.map(function (r) { return r.format; }).join(' and ') + (elsewhere ? ' from ' + where + '.' : '.') +
+        (local ? ' Already on the server.' : '') +
         (tried.length ? ' Not on ' + tried.join(' or ') + '.' : '') +
         (!elsewhere && job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
       announce(message);
@@ -1052,7 +1063,11 @@
   }
 
   function scanTag(song) {
-    return SCAN_TAGS[(song.state === 'found' && foundElsewhere(song)) || song.state];
+    var tag = SCAN_TAGS[(song.state === 'found' && foundElsewhere(song)) || song.state];
+    if (song.state === 'found' && song.results.length && song.results[0].local) {
+      tag = tag.replace(/ title="[^"]*"/, '').replace('<span ', '<span title="Already on the server, so it downloads at once" ');
+    }
+    return tag;
   }
 
   function initScan() {
@@ -1074,7 +1089,7 @@
         return '<tr data-index="' + i + '" data-state="">' +
           '<td class="table-numeric col-index">' + (i + 1) + '</td>' +
           '<td><div class="song-cell"><span class="text-medium">' + escapeHtml(song.title) + '</span>' +
-            '<span class="text-caption text-muted">' + escapeHtml(song.artist || 'Unknown artist') + '</span></div></td>' +
+            (song.artist ? '<span class="text-caption text-muted">' + escapeHtml(song.artist) + '</span>' : '') + '</div></td>' +
           '<td class="cell-status"></td>' +
           '<td class="table-numeric hide-sm text-muted cell-size"></td>' +
           '<td class="col-action"><button class="button button-icon button-icon-sm" type="button" data-action="' + action + '"' +
@@ -1109,7 +1124,6 @@
         (elsewhere.length ? ' (' + elsewhere.join(', ') + ')' : ''),
         missing + ' not found'];
       if (job.state === 'running') parts.push(left + ' left to scan');
-      parts.push(escapeHtml(lookedFor(job.formats, job.sources)));
       if (job.skipped) parts.push(job.skipped + ' row' + (job.skipped === 1 ? '' : 's') + ' without a song name skipped');
       if (server) parts.push('<span class="text-mono">' + escapeHtml(serverRoot + subfolder()) + '</span>');
       $('[data-scan-summary]', results).innerHTML = parts.join(' · ');
@@ -1197,6 +1211,82 @@
       return ids;
     }
 
+    /* Download all: shows in each song's row where its files are (waiting,
+       downloading, ready, failed), and keeps the song being fetched in view
+       while the list is followed. update(views) takes fetchFiles' views (one
+       per result, in resultIds order) and returns the songs being fetched. */
+    function batchRows(tracks) {
+      var scroller = $('.scan-scroll', results);
+      var owners = [];   // result index -> { song, row, from, to }
+      var songs = tracks.map(function (song) {
+        var entry = { song: song, row: rows.children[scan.job.tracks.indexOf(song)], from: owners.length, shown: '' };
+        song.results.forEach(function () { owners.push(entry); });
+        entry.to = owners.length;
+        return entry;
+      });
+      var followed = null;
+
+      function visible(row) {
+        var box = scroller.getBoundingClientRect(), r = row.getBoundingClientRect();
+        var head = $('thead', scroller);
+        var top = box.top + (head ? head.offsetHeight : 0);
+        return r.bottom > top && r.top < box.bottom;
+      }
+
+      function show(entry, html) {
+        if (entry.shown === html || !entry.row) return;
+        /* A row being fetched on its own shows its own progress */
+        if (isBusy($('[data-action]', entry.row))) return;
+        entry.shown = html;
+        $('.cell-status', entry.row).innerHTML = html;
+      }
+
+      return {
+        update: function (views) {
+          var current = [];
+          songs.forEach(function (entry) {
+            var mine = views.slice(entry.from, entry.to);
+            var started = mine.filter(Boolean);
+            var running = started.some(function (v) { return v.state === 'running'; });
+            entry.row && entry.row.classList.toggle('is-fetching', running);
+            if (!started.length) {
+              show(entry, '<span class="tag">Waiting</span>');
+            } else if (running || started.length < mine.length) {
+              current.push(entry.song);
+              show(entry, fetchTag(fetchSummary(mine)));
+            } else if (started.some(function (v) { return v.state === 'done'; })) {
+              show(entry, '<span class="tag tag-success">Ready</span>');
+            } else {
+              show(entry, '<span class="tag tag-danger" title="' + escapeHtml(started[0].error || '') + '">Failed</span>');
+            }
+          });
+          /* Follow along, unless the list was scrolled away from the song */
+          var first = songs.filter(function (e) { return e.song === current[0]; })[0];
+          if (first && first.row && first.row !== followed) {
+            if (!followed || visible(followed)) {
+              var head = $('thead', scroller);
+              var offset = first.row.offsetTop - (head ? head.offsetHeight : 0);
+              if (!visible(first.row)) scroller.scrollTop = Math.max(0, offset - scroller.clientHeight / 3);
+            }
+            followed = first.row;
+          }
+          return current;
+        },
+        /* Back to how the scan left each row; a song that failed says so */
+        finish: function (jobs) {
+          songs.forEach(function (entry) {
+            if (!entry.row) return;
+            entry.row.classList.remove('is-fetching');
+            var mine = (jobs || []).slice(entry.from, entry.to);
+            var failed = jobs && mine.length && mine.every(function (j) { return j && j.state !== 'done'; });
+            show(entry, failed
+              ? '<span class="tag tag-danger" title="' + escapeHtml(mine[0].error || '') + '">Failed</span>'
+              : scanTag(entry.song));
+          });
+        }
+      };
+    }
+
     results.addEventListener('click', async function (event) {
       var target = event.target.closest('[data-action]');
       if (!target || target.disabled || isBusy(target) || !scan || !scan.job) return;
@@ -1208,12 +1298,26 @@
           if (scan.job.state === 'running' || !found.length) return;
           setBusy(target, 'Fetching');
           var all = resultIds(found);
+          var batch = batchRows(found);
           var meter = $('[data-fetch-status]', results);
+          /* The note takes the summary's line, so the list keeps its height */
+          $('[data-scan-summary]', results).hidden = true;
           showFetch(meter, fetchSummary(all.map(function () { return null; })));
-          var jobs = await fetchFiles(all, 3, function (summary) {
-            setBusy(target, summary.progress !== null ? 'Fetching ' + Math.round(summary.progress * 100) + '%' : 'Fetching');
-            showFetch(meter, summary);
-          });
+          batch.update(all.map(function () { return null; }));
+          var jobs;
+          try {
+            jobs = await fetchFiles(all, 3, function (summary) {
+              setBusy(target, summary.progress !== null ? 'Fetching ' + Math.round(summary.progress * 100) + '%' : 'Fetching');
+              var current = batch.update(summary.views);
+              if (current.length) {
+                summary.note = 'Now: ' + current.slice(0, 3).map(function (t) { return t.title; }).join(', ') +
+                  ' · ' + summary.note;
+              }
+              showFetch(meter, summary);
+            });
+          } finally {
+            batch.finish(jobs);
+          }
           var zipName = scan.job.name.replace(/\.(?:csv|txt)$/i, '');
           await deliver(jobs, found.length + ' songs', zipName);
         } else if (action === 'queue-all') {
@@ -1226,6 +1330,7 @@
           var ids = song.results.map(function (r) { return r.id; });
           var label = '"' + song.title + '"';
           setBusy(target, '');
+          target.removeAttribute('data-redo');
           target.innerHTML = '<span class="icon icon-sm" aria-hidden="true">hourglass_top</span>';
           var ok;
           if (action === 'download-row') {
@@ -1236,8 +1341,7 @@
                   ? '<span class="fetch-pct" aria-hidden="true">' + summary.short + '</span>'
                   : '<span class="icon icon-sm" aria-hidden="true">hourglass_top</span>';
                 target.title = summary.note;
-                statusCell.innerHTML = '<span class="tag tag-info" title="' + escapeHtml(summary.note) + '">' +
-                  escapeHtml(summary.progress !== null ? 'Downloading ' + summary.short : summary.short) + '</span>';
+                statusCell.innerHTML = fetchTag(summary);
               }), label);
             } finally {
               statusCell.innerHTML = scanTag(song);
@@ -1246,11 +1350,22 @@
           } else {
             ok = (await queueResults(ids, label)).queued > 0;
           }
-          /* Stay focusable (aria-disabled) so focus is not dropped. */
-          var verb = action === 'download-row' ? 'Downloaded ' : 'Queued ';
+          if (ok && action === 'download-row') {
+            /* The browser may still have dropped the file (cancelled, failed),
+               so the check stays clickable and fetches it again. */
+            target.setAttribute('aria-label', 'Downloaded ' + song.title + '. Download again');
+            target.setAttribute('title', 'Downloaded. Click to download again');
+            target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true" data-done>check</span>' +
+              '<span class="icon icon-sm" aria-hidden="true" data-again>download</span>';
+            target.setAttribute('data-redo', '');
+            target.removeAttribute('data-idle');
+            target.removeAttribute('aria-disabled');
+            return;
+          }
           if (ok) {
-            target.setAttribute('aria-label', verb + song.title);
-            target.setAttribute('title', verb + song.title);
+            /* Stay focusable (aria-disabled) so focus is not dropped. */
+            target.setAttribute('aria-label', 'Queued ' + song.title);
+            target.setAttribute('title', 'Queued ' + song.title);
             target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true">check</span>';
             target.removeAttribute('data-idle');
             return;
@@ -1269,6 +1384,7 @@
       } finally {
         if (action === 'download-all' || action === 'queue-all') {
           hideFetch($('[data-fetch-status]', results));
+          $('[data-scan-summary]', results).hidden = false;
           setIdle(target);
           updateSummary(scan.job);
         }

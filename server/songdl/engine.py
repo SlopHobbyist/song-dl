@@ -12,6 +12,7 @@ import asyncio
 import heapq
 import itertools
 import logging
+import os
 import re
 import shutil
 import time
@@ -20,6 +21,7 @@ from collections import deque
 from pathlib import Path
 
 from . import matching, soundcloud_audio, youtube_audio
+from .library import Library
 from .errors import UserError
 from .slskd import Slskd, SlskdError
 
@@ -152,6 +154,7 @@ class Engine:
         self.soundcloud = soundcloud_audio.SoundCloudAudio(cfg)
         # Where to look when Soulseek doesn't have a song, by source name (matching.SOURCES)
         self.elsewhere = {'soundcloud': self.soundcloud, 'youtube': self.youtube}
+        self.library = Library(cfg)   # songs already here, looked at before any of those
 
     def spawn(self, coro):
         task = asyncio.create_task(coro)
@@ -373,7 +376,9 @@ class Engine:
     async def _run_fetch(self, fetch: Fetch):
         cand = fetch.cand
         try:
-            if cand.source != 'soulseek':
+            if cand.source == 'local':
+                await self._local(fetch)
+            elif cand.source != 'soulseek':
                 await self._elsewhere(fetch)
             else:
                 await self._transfer(fetch)
@@ -385,6 +390,12 @@ class Engine:
             fetch.phase = 'failed'
             fetch.error = 'Cancelled'
             raise
+        except OSError as e:
+            if cand.source != 'local':
+                raise
+            log.info('local copy %s is gone: %s', cand.filename, e)
+            fetch.error = 'The copy on the server is gone. Please search again'
+            fetch.phase = 'failed'
         except Exception as e:
             if cand.source != 'soulseek':
                 log.info('%s download of %s failed: %r', cand.source, cand.url, e)
@@ -393,6 +404,18 @@ class Engine:
                 log.exception('fetch crashed')
                 fetch.error = f'Something went wrong downloading from {cand.username}'
             fetch.phase = 'failed'
+
+    async def _local(self, fetch: Fetch):
+        """Hands out a file that's already on the server: a hard link to it in the fetch's own
+        folder (a copy where links don't work), so it's served like any other download."""
+        src = Path(fetch.cand.filename)
+        folder = self.cfg.downloads_dir / fetch.id
+        fetch.started = time.monotonic()
+        fetch.path = await asyncio.to_thread(_link, src, folder)
+        fetch.bytes = fetch.path.stat().st_size
+        fetch.finished = time.monotonic()
+        fetch.phase = 'done'
+        log.info('handed out %s again', src)
 
     async def _elsewhere(self, fetch: Fetch):
         """Downloads a SoundCloud track's or YouTube video's audio into the fetch's folder."""
@@ -532,6 +555,23 @@ class Engine:
             del self.fetches[key]
         for user in [u for u in self.asked if not self.asked_recently(u)]:
             del self.asked[user]
+
+
+def _link(src: Path, folder: Path):
+    """Links src into folder and returns the new path. The link sets the file's change time,
+    which restarts its clock for deletion (see web.delete_old_downloads); a visitor's file
+    gets its modified time reset too, for anything that only looks at that."""
+    folder.mkdir(parents=True, exist_ok=True)
+    dst = folder / src.name
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        pass
+    except OSError:
+        shutil.copy2(src, dst)
+    if STAGING.match(src.parent.name):
+        os.utime(dst)
+    return dst
 
 
 def _newest_file(folder: Path):
