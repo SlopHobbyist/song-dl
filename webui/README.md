@@ -17,7 +17,7 @@ For regular non logged in users.
 
 or
 
-- Press the Playlist button to choose a playlist's song csv (or drop the csv anywhere on the page),
+- Press the Playlist button to choose a playlist's song csv, or a .txt file with one song per line like `Artist - Song` (or drop either anywhere on the page),
   or paste a Spotify or YouTube playlist link in the search box
 - The playlist panel opens only then, showing the playlist in a bar like the search box; its X removes it and goes back
 - Formats (WAV, FLAC, AIFF, MP3) and Sources are ticked and dragged into order in their own dialogs;

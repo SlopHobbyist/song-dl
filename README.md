@@ -6,7 +6,7 @@ A simple web interface for downloading music off of Soulseek.
 
 ## About
 
-This is a website for downloading music. It grabs songs from the Soulseek network using Slskd. Type a song name, and it'll find the highest quality version available. If Soulseek doesn't have it, it can fall back to SoundCloud, then the best audio on YouTube. Using CSV files, or by pasting a Spotify or YouTube playlist link, you can download playlists too. If you have a NAS, Admins can choose to download to the server instead.
+This is a website for downloading music. It grabs songs from the Soulseek network using Slskd. Type a song name, and it'll find the highest quality version available. If Soulseek doesn't have it, it can fall back to SoundCloud, then the best audio on YouTube. Using CSV files, plain text files (one song per line), or by pasting a Spotify or YouTube playlist link, you can download playlists too. If you have a NAS, Admins can choose to download to the server instead.
 
 ## Differentiators
 

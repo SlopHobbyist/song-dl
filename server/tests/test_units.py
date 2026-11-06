@@ -86,6 +86,23 @@ def test_main_artist(raw, main):
     assert playlist._main_artist(raw) == main
 
 
+def test_playlist_text_one_song_per_line():
+    raw = ('\ufeffDaft Punk - Digital Love\r\n1. Radiohead – Weird Fishes/Arpeggi\n\n# a note\n'
+           '- Queen - Bohemian Rhapsody (Official Video)\nJay-Z - 99 Problems\nEarth, Wind & Fire, X - September\n'
+           'Smells Like Teen Spirit\nhttps://youtu.be/abcdefghijk\ndaft punk - digital love\n').encode()
+    tracks, skipped = playlist.parse_text(raw)
+    assert [(t.artist, t.title) for t in tracks] == [
+        ('Daft Punk', 'Digital Love'), ('Radiohead', 'Weird Fishes/Arpeggi'), ('Queen', 'Bohemian Rhapsody'),
+        ('Jay-Z', '99 Problems'), ('Earth, Wind & Fire', 'September'), ('', 'Smells Like Teen Spirit')]
+    assert skipped == 1
+    # Commas don't split a line: a text list isn't a CSV
+    assert [t.title for t in playlist.parse_text(b'title,artist\n')[0]] == ['title,artist']
+    with pytest.raises(UserError):
+        playlist.parse_text(b'\n  \n')
+    with pytest.raises(UserError, match='3 songs'):
+        playlist.parse_text(b'a\nb\nc\n', limit=2)
+
+
 def test_playlist_without_a_title_column_is_refused():
     with pytest.raises(UserError):
         playlist.parse(b'foo,bar\n1,2\n')

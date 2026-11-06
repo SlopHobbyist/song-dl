@@ -276,14 +276,15 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
 
     async def start_scan(request):
         if (request.content_length or 0) > MAX_UPLOAD:
-            raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
+            raise UserError('That file is too big. A playlist file should be well under 500 KB.', 413)
         sources = parse_sources(request.query.get('sources'))
         formats = parse_search_formats(request.query.get('formats', ''), sources)
         limit(request, 'scan')
         raw = await request.read()
         if len(raw) > MAX_UPLOAD:
-            raise UserError('That file is too big. A playlist CSV should be well under 500 KB.', 413)
-        tracks, skipped = playlist.parse(raw)
+            raise UserError('That file is too big. A playlist file should be well under 500 KB.', 413)
+        read = playlist.parse_text if request.query.get('type') == 'text' else playlist.parse
+        tracks, skipped = read(raw)
         name = ' '.join(request.query.get('name', '').split())[:80] or 'your playlist'
         job = await manager.start_scan(name, formats, tracks, skipped, sources)
         log.info('scan %s from %s: %r, %d songs (%s; %s)', job.id, client_ip(request), name, len(tracks),
@@ -470,19 +471,21 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     # Playlist imports (admins only)
 
     async def add_import(request):
-        """{csv, name, formats, folder}: the whole playlist, searched in the background."""
+        """{csv, type, name, formats, folder}: the whole playlist, searched in the background.
+        type 'text' means csv holds a plain text list, one song per line."""
         user = require_admin(request)
         data = await read_json(request, MAX_IMPORT)
         text = data.get('csv')
         if not isinstance(text, str) or not text.strip():
-            raise UserError('Choose a playlist CSV or paste a playlist link first.')
+            raise UserError('Choose a playlist CSV or text file, or paste a playlist link first.')
         sources = parse_sources(data.get('sources'))
         formats = parse_search_formats(data.get('formats'), sources)
-        tracks, skipped = playlist.parse(
+        read = playlist.parse_text if data.get('type') == 'text' else playlist.parse
+        tracks, skipped = read(
             text.encode('utf-8'), imports.MAX_TRACKS,
             'That playlist has {n} songs. An import can have up to {limit}; split it into smaller files.')
         name = ' '.join(str(data.get('name') or '').split())[:120]
-        name = re.sub(r'\.csv$', '', name, flags=re.I) or 'Playlist'
+        name = re.sub(r'\.(?:csv|txt)$', '', name, flags=re.I) or 'Playlist'
         imp = importer.add(name, formats, data.get('folder'), user, tracks, skipped, sources)
         return web.json_response(imp.view())
 

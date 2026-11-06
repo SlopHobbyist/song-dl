@@ -29,8 +29,8 @@ async def search(client, query, formats):
     return await wait_for(poll, lambda v: v['state'] != 'running')
 
 
-async def scan(client, csv, formats):
-    res = await client.post('/api/scan', params={'formats': formats, 'name': 'test.csv'}, data=csv.encode())
+async def scan(client, csv, formats, **params):
+    res = await client.post('/api/scan', params={'formats': formats, 'name': 'test.csv', **params}, data=csv.encode())
     assert res.status == 200, await res.text()
     sid = (await res.json())['id']
 
@@ -159,6 +159,12 @@ async def test_playlist_scan_then_download(site):
     assert len(jobs) == 2 and all(j['state'] == 'done' for j in jobs.values())
     res = await site.get(await zip_url(site, ids))
     assert len(zipfile.ZipFile(io.BytesIO(await res.read())).namelist()) == 2
+
+
+async def test_playlist_scan_of_a_text_file(site):
+    job = await scan(site, 'Daft Punk - Digital Love\nNobody - No Such Song\n', 'wav,flac', name='list.txt', type='text')
+    assert [(t['artist'], t['title'], t['state']) for t in job['tracks']] == [
+        ('Daft Punk', 'Digital Love', 'found'), ('Nobody', 'No Such Song', 'missing')]
 
 
 async def test_scan_rejects_a_bad_csv(site):

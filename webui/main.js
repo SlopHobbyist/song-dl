@@ -450,6 +450,11 @@
   }
 
   /* The playlist the panel holds: the CSV read from a link, or the file chosen. */
+  /* A chosen file is either a CSV or a plain text list, one song per line */
+  function isTextList(file) {
+    return !/\.csv$/i.test(file.name) && file.type !== 'text/csv';
+  }
+
   function chosenPlaylist() {
     var input = $('#csv-input');
     return linked ? linked.file : input && input.files && input.files[0];
@@ -489,11 +494,12 @@
         '</div>';
     }
 
-    /* A CSV was chosen (or dropped): it replaces any link, and opens the playlist panel */
+    /* A CSV or text file was chosen (or dropped): it replaces any link, and opens the playlist panel */
     function useFile(file) {
-      if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') {
+      if (!/\.(?:csv|txt)$/i.test(file.name) && file.type !== 'text/csv' && file.type !== 'text/plain') {
         input.value = '';
-        toast('That isn\'t a CSV file. Choose a playlist CSV, or paste a playlist link in the search box.', 'warning');
+        toast('That isn\'t a CSV or text file. Choose a playlist CSV, a text file with one song per line, ' +
+          'or paste a playlist link in the search box.', 'warning');
         return;
       }
       forgetLink();
@@ -630,7 +636,7 @@
       if (input.files && input.files.length) useFile(input.files[0]);
     });
 
-    /* A CSV dragged anywhere onto the page is used like a chosen one. While a
+    /* A CSV or text file dragged anywhere onto the page is used like a chosen one. While a
        file is over the window, an overlay says so. It ignores the pointer, so
        the drag events still land on the page underneath; dragenter and
        dragleave come in pairs per element, so a count says when the drag has
@@ -643,7 +649,7 @@
     overlay.hidden = true;
     overlay.setAttribute('aria-hidden', 'true');
     overlay.innerHTML = '<div class="drop-overlay-box"><span class="icon icon-lg">upload_file</span>' +
-      '<span class="text-heading-3">Drop a playlist CSV</span></div>';
+      '<span class="text-heading-3">Drop a playlist CSV or text file</span></div>';
     document.body.appendChild(overlay);
     var dragDepth = 0;
     function endDrag() { dragDepth = 0; overlay.hidden = true; }
@@ -1125,7 +1131,7 @@
       var formats = chosenFormats();
       var sources = chosenSources();
       if (!file) {
-        toast('Choose a playlist CSV or paste a playlist link first', 'warning');
+        toast('Choose a playlist CSV or text file, or paste a playlist link first', 'warning');
         return;
       }
       if (usesSoulseek() && !formats.length) {
@@ -1148,6 +1154,7 @@
       announce('Scanning playlist');
       try {
         var started = await api('POST', '/api/scan?name=' + encodeURIComponent(file.name) +
+          (isTextList(file) ? '&type=text' : '') +
           '&formats=' + encodeURIComponent(formats.join(',')) + '&sources=' + encodeURIComponent(sources.join(',')),
           undefined, await file.arrayBuffer());
         if (run !== runs.scan) return;
@@ -1207,7 +1214,7 @@
             setBusy(target, summary.progress !== null ? 'Fetching ' + Math.round(summary.progress * 100) + '%' : 'Fetching');
             showFetch(meter, summary);
           });
-          var zipName = scan.job.name.replace(/\.csv$/i, '');
+          var zipName = scan.job.name.replace(/\.(?:csv|txt)$/i, '');
           await deliver(jobs, found.length + ' songs', zipName);
         } else if (action === 'queue-all') {
           if (scan.job.state === 'running' || !found.length) return;
@@ -1313,7 +1320,7 @@
       var file = chosenPlaylist();
       var formats = chosenFormats();
       if (!file) {
-        toast('Choose a playlist CSV or paste a playlist link first', 'warning');
+        toast('Choose a playlist CSV or text file, or paste a playlist link first', 'warning');
         return;
       }
       if (usesSoulseek() && !formats.length) {
@@ -1321,13 +1328,14 @@
         return;
       }
       if (file.size > 8 * 1024 * 1024) {
-        toast('That file is too big. A playlist CSV should be under 8 MB.', 'warning');
+        toast('That file is too big. A playlist file should be under 8 MB.', 'warning');
         return;
       }
       setBusy(button, 'Importing');
       try {
         var imp = await api('POST', '/api/imports', {
           csv: await file.text(),
+          type: isTextList(file) ? 'text' : 'csv',
           name: linked ? linked.name : file.name,
           formats: formats,
           sources: chosenSources(),

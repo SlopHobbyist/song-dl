@@ -1,10 +1,12 @@
-"""Reads a playlist exported as CSV into a list of tracks.
+"""Reads a playlist exported as CSV, or a plain text list, into a list of tracks.
 
 Every service names its columns differently (Spotify exports use "Track Name"
 and "Artist Name(s)", Exportify and TuneMyMusic use "title" or "name" and
 "artists", and so on), so columns are found by looking their heading up in a
 table of known names. Only the song name is required; the artist makes the
 search much more accurate.
+
+A text file (parse_text) has one song per line, ideally "Artist - Song".
 """
 
 import csv
@@ -119,6 +121,44 @@ def _main_artist(artists):
     return name.strip()
 
 
+def _finish(tracks, skipped, limit, too_many):
+    if not tracks:
+        raise UserError('Couldn\'t find any songs in that file.')
+    if len(tracks) > limit:
+        raise UserError((too_many or 'That playlist has {n} songs. A scan can have up to {limit}; '
+                         'split it into smaller files.').format(n=len(tracks), limit=limit))
+    return tracks, skipped
+
+
+# "1. ", "12) ", "- ", "* ", "• " in front of a line of a list
+LIST_MARK = re.compile(r'^(?:\d{1,4}[.)]|[-*•–])\s+')
+
+
+def parse_text(raw: bytes, limit=MAX_TRACKS, too_many=None):
+    """A plain text list, one song per line: "Artist - Song", or just the song name.
+    Returns (tracks, skipped) like parse; skipped counts lines that were only a link."""
+    from .youtube import split   # its title splitter also drops "(Official Video)" and the like
+    text = _decode(raw)
+    if not text.strip():
+        raise UserError('That file is empty.')
+    tracks, seen, skipped = [], set(), 0
+    for line in text.splitlines():
+        line = LIST_MARK.sub('', ' '.join(line.split()))
+        if not line or line.startswith('#'):
+            continue
+        if re.match(r'(?:https?://|www\.)\S*$', line, re.I):
+            skipped += 1   # a bare link names no song
+            continue
+        artist, title = split(line, '')
+        artist, title = _main_artist(artist), title or line
+        key = (artist.lower(), title.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        tracks.append(Track(title, artist))
+    return _finish(tracks, skipped, limit, too_many)
+
+
 def parse(raw: bytes, limit=MAX_TRACKS, too_many=None):
     """Returns (tracks, skipped) where skipped counts rows without a song name.
     More than `limit` songs is refused with `too_many` (formatted with n and limit)."""
@@ -164,10 +204,4 @@ def parse(raw: bytes, limit=MAX_TRACKS, too_many=None):
         seen.add(key)
         tracks.append(Track(title, artist, cell(row, b_col),
                             _seconds(cell(row, d_col), header[d_col]) if d_col is not None and d_col < len(header) else None))
-
-    if not tracks:
-        raise UserError('Couldn\'t find any songs in that file.')
-    if len(tracks) > limit:
-        raise UserError((too_many or 'That playlist has {n} songs. A scan can have up to {limit}; '
-                         'split it into smaller files.').format(n=len(tracks), limit=limit))
-    return tracks, skipped
+    return _finish(tracks, skipped, limit, too_many)

@@ -38,8 +38,9 @@ async def test_a_visitors_search_goes_ahead_of_an_import():
     assert order == ['visitor', 'import']
 
 
-async def start_import(client, csv=CSV, formats='wav,flac', folder='Road Trip', name='road trip.csv'):
-    res = await client.post('/api/imports', json={'csv': csv, 'name': name, 'formats': formats, 'folder': folder})
+async def start_import(client, csv=CSV, formats='wav,flac', folder='Road Trip', name='road trip.csv', type='csv'):
+    res = await client.post('/api/imports', json={'csv': csv, 'name': name, 'formats': formats, 'folder': folder,
+                                                  'type': type})
     assert res.status == 200, await res.text()
     return (await res.json())['id']
 
@@ -70,6 +71,13 @@ async def test_an_import_queues_every_song_it_finds(admin):
 
     # The songs it queued download on their own
     await wait_for(lambda: queue_view(admin), lambda q: all(i['status'] == 'done' for i in q['items']), timeout=30)
+
+
+async def test_an_import_of_a_text_file(admin):
+    iid = await start_import(admin, 'Daft Punk - Digital Love\nDuck Sauce - Barbra Streisand\n', name='list.txt',
+                             type='text')
+    view = await wait_for(lambda: import_view(admin, iid), lambda v: v['state'] == 'done')
+    assert (view['name'], view['total'], view['found']) == ('list', 2, 2)
 
 
 async def test_imports_take_far_more_than_a_scan(admin, site):
