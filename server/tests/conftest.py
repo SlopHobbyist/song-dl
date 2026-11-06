@@ -32,6 +32,15 @@ def fast(monkeypatch):
     monkeypatch.setattr(engine, 'SEARCHES_PER_WINDOW', 10_000)   # tests search far faster than Soulseek allows
     monkeypatch.setattr('songdl.imports.TICK_SECONDS', 0.1)
 
+    # Tests never reach the real SoundCloud or YouTube; the ones about them put a fake in
+    def offline(*args):
+        raise ConnectionError('no network in tests')
+
+    for name in ('songdl.soundcloud_audio', 'songdl.youtube_audio'):
+        for func in ('_search', '_download'):
+            monkeypatch.setattr(f'{name}.{func}', offline)
+    monkeypatch.setattr('songdl.youtube_audio._probe', offline)
+
 
 @pytest_asyncio.fixture
 async def fake(tmp_path):

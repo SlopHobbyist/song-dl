@@ -181,7 +181,7 @@ class Cancelled(Exception):
 
 
 def _download(cfg, cand, folder: Path, fetch):
-    """Saves the video's best audio into the folder and returns its path. Reports
+    """Saves the video's (or SoundCloud track's) best audio into the folder and returns its path. Reports
     progress on `fetch` (bytes, total, speed, phase) and stops when fetch.cancelled is set."""
     import yt_dlp
 
@@ -212,7 +212,7 @@ def _download(cfg, cand, folder: Path, fetch):
         paths = [Path(d['filepath']) for d in (info or {}).get('requested_downloads') or [] if d.get('filepath')]
         path = next((p for p in paths if p.is_file()), None)
         if not path:
-            raise UserError('YouTube sent nothing to save')
+            raise UserError('Nothing came back to save')
         return path
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
@@ -234,6 +234,8 @@ def download_error(e):
 
 
 class YouTubeAudio:
+    source = 'youtube'
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.searches = asyncio.Semaphore(SEARCHES)
@@ -242,7 +244,7 @@ class YouTubeAudio:
     async def _run(self, func, *args, timeout=SEARCH_TIMEOUT):
         return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout)
 
-    async def find(self, query, artist='', title='', duration=None, video=None):
+    async def find(self, query, artist='', title='', duration=None, video=None, more=False):
         """The videos that are the song, best first, the first with its quality
         read; [] when YouTube has none. `video` is a video ID to take as is."""
         async with self.searches:

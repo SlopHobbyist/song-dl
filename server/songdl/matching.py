@@ -21,13 +21,20 @@ from dataclasses import dataclass, field
 from . import meta
 
 FORMATS = ('wav', 'aiff', 'flac', 'mp3')   # the order the site lists them in
-# ...and the formats YouTube's audio comes in (see youtube_audio.py), which nobody picks
+# ...and the formats SoundCloud's and YouTube's audio comes in (see youtube_audio.py), which nobody picks
 EXTENSIONS = {'wav': ('.wav',), 'aiff': ('.aiff', '.aif'), 'flac': ('.flac',), 'mp3': ('.mp3',),
               'opus': ('.opus',), 'm4a': ('.m4a',), 'ogg': ('.ogg',)}
 LABELS = {'wav': 'WAV', 'aiff': 'AIFF', 'flac': 'FLAC', 'mp3': 'MP3', 'opus': 'Opus', 'm4a': 'M4A', 'ogg': 'OGG'}
 LOSSY = {'mp3', 'opus', 'm4a', 'ogg'}
 SOURCES = ('soulseek', 'soundcloud', 'youtube')   # where to look, in the order they're tried
 SOURCE_LABELS = {'soulseek': 'Soulseek', 'soundcloud': 'SoundCloud', 'youtube': 'YouTube'}
+ELSEWHERE = SOURCES[1:]   # ...when Soulseek doesn't have the song
+
+
+def more_after(source, sources):
+    """Whether one of `sources` is still to be tried after `source`."""
+    return any(s in sources for s in SOURCES[SOURCES.index(source) + 1:])
+
 
 # Words that mark a different version of a song than the one usually wanted.
 VARIANT_WORDS = {
@@ -72,7 +79,7 @@ class Candidate:
     variant: bool = False
     outlier: bool = False
     meta: dict = field(default_factory=dict)
-    source: str = 'soulseek'     # or 'youtube': username is then the channel, and url the video
+    source: str = 'soulseek'     # or 'soundcloud' / 'youtube': username is then the account or channel, url the track
     url: str | None = None
 
     @property

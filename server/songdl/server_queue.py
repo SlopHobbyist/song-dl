@@ -265,7 +265,7 @@ class ServerQueue:
         waiting = [i for i in self.items.values() if i.status == 'queued']
         if not waiting or running >= SLOTS:
             return
-        # Songs from YouTube don't need Soulseek, so they still go while it's away
+        # Songs from SoundCloud or YouTube don't need Soulseek, so they still go while it's away
         if any(i.source == 'soulseek' for i in waiting) and not await self.engine.connected():
             waiting = [i for i in waiting if i.source != 'soulseek']
         for item in waiting[:SLOTS - running]:

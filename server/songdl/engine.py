@@ -1,6 +1,6 @@
 """Everything that talks to Soulseek through slskd: searching, ranking what
-comes back, and fetching files. Songs found on YouTube instead (see
-youtube_audio.py) are fetched here too, the same way.
+comes back, and fetching files. Songs found on SoundCloud or YouTube instead
+(see soundcloud_audio.py, youtube_audio.py) are fetched here too, the same way.
 
 Fetching goes through a Fetch, one per remote file, shared by everything that
 wants that file, so two people downloading the same song don't enqueue it
@@ -19,7 +19,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import matching, youtube_audio
+from . import matching, soundcloud_audio, youtube_audio
 from .errors import UserError
 from .slskd import Slskd, SlskdError
 
@@ -149,6 +149,9 @@ class Engine:
         self.asked = {}       # username -> monotonic time we last asked them for a file
         self.captcha = None   # captcha.Captcha, when captchas are answered
         self.youtube = youtube_audio.YouTubeAudio(cfg)
+        self.soundcloud = soundcloud_audio.SoundCloudAudio(cfg)
+        # Where to look when Soulseek doesn't have a song, by source name (matching.SOURCES)
+        self.elsewhere = {'soundcloud': self.soundcloud, 'youtube': self.youtube}
 
     def spawn(self, coro):
         task = asyncio.create_task(coro)
@@ -253,11 +256,13 @@ class Engine:
             cands.sort(key=lambda c: not (c.length and abs(c.length - track.duration) <= LENGTH_TOLERANCE))
         return cands
 
-    async def find_on_youtube(self, track, status=None):
-        """The videos on YouTube that are a playlist's song, best first, or [] (see youtube_audio)."""
+    async def find_elsewhere(self, source, track, status=None, more=False):
+        """The copies of a playlist's song on SoundCloud or YouTube, best first, or []. `more`:
+        somewhere else will be tried after."""
         if status:
-            status('Searching YouTube')
-        return await self.youtube.find(track.query, track.artist, track.title, track.duration)
+            status(f'Searching {matching.SOURCE_LABELS[source]}')
+        return await self.elsewhere[source].find(track.query, track.artist, track.title, track.duration,
+                                                 more=more)
 
     # Download
 
@@ -291,9 +296,10 @@ class Engine:
                     await cancel
                 if self.fetches.get(fetch.key) is fetch:
                     del self.fetches[fetch.key]
-        if cands and all(c.source == 'youtube' for c in cands):
-            reason = fetch.error if fetch.error and fetch.error != 'Cancelled' else 'YouTube didn\'t send the audio'
-            raise UserError(f'Couldn\'t download it from YouTube: {reason[0].lower() + reason[1:]}.'
+        if cands and cands[0].source != 'soulseek' and all(c.source == cands[0].source for c in cands):
+            where = matching.SOURCE_LABELS[cands[0].source]
+            reason = fetch.error if fetch.error and fetch.error != 'Cancelled' else f'{where} didn\'t send the audio'
+            raise UserError(f'Couldn\'t download it from {where}: {reason[0].lower() + reason[1:]}.'
                             ' Please try again later.')
         raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
                         if len(cands) > 1 else
@@ -311,6 +317,7 @@ class Engine:
     async def _watch(self, fetch: Fetch, is_last, attempt, update):
         """Follows a fetch. Returns True once the file is ready, False when this copy is no good."""
         user = fetch.cand.username
+        where = matching.SOURCE_LABELS[fetch.cand.source]
         prefix = 'Another copy: ' if attempt else ''
         waiting_since = time.monotonic()
         progress_at, progress_bytes = time.monotonic(), -1
@@ -330,7 +337,7 @@ class Engine:
             if phase == 'transferring':
                 size = fetch.total or fetch.cand.size
                 report(min(1, fetch.bytes / size) if size else None,
-                       'Downloading from YouTube' if fetch.cand.source == 'youtube' else 'Downloading')
+                       'Downloading' if fetch.cand.source == 'soulseek' else f'Downloading from {where}')
                 if fetch.bytes != progress_bytes:
                     progress_at, progress_bytes = time.monotonic(), fetch.bytes
                 elif time.monotonic() - progress_at > STALL_SECONDS:
@@ -341,10 +348,10 @@ class Engine:
                     report(None, f'Queued by the uploader (position {fetch.place})' if fetch.place
                            else 'Queued by the uploader')
                 elif phase == 'waiting':
-                    report(None, 'Waiting for a turn to download from YouTube')
+                    report(None, f'Waiting for a turn to download from {where}')
                     waiting_since = time.monotonic()   # not stuck, just busy
-                elif fetch.cand.source == 'youtube':
-                    report(None, 'Getting the audio from YouTube')
+                elif fetch.cand.source != 'soulseek':
+                    report(None, f'Getting the audio from {where}')
                 else:
                     report(None, f'Requesting the file from {user}')
                 limit = QUEUE_WAIT_LAST if is_last else QUEUE_WAIT
@@ -366,8 +373,8 @@ class Engine:
     async def _run_fetch(self, fetch: Fetch):
         cand = fetch.cand
         try:
-            if cand.source == 'youtube':
-                await self._youtube(fetch)
+            if cand.source != 'soulseek':
+                await self._elsewhere(fetch)
             else:
                 await self._transfer(fetch)
         except SlskdError as e:
@@ -379,24 +386,24 @@ class Engine:
             fetch.error = 'Cancelled'
             raise
         except Exception as e:
-            if cand.source == 'youtube':
-                log.info('youtube download of %s failed: %r', cand.url, e)
-                fetch.error = youtube_audio.download_error(e)
+            if cand.source != 'soulseek':
+                log.info('%s download of %s failed: %r', cand.source, cand.url, e)
+                fetch.error = (soundcloud_audio if cand.source == 'soundcloud' else youtube_audio).download_error(e)
             else:
                 log.exception('fetch crashed')
                 fetch.error = f'Something went wrong downloading from {cand.username}'
             fetch.phase = 'failed'
 
-    async def _youtube(self, fetch: Fetch):
-        """Downloads a video's audio into the fetch's folder."""
+    async def _elsewhere(self, fetch: Fetch):
+        """Downloads a SoundCloud track's or YouTube video's audio into the fetch's folder."""
         cand = fetch.cand
         fetch.started = time.monotonic()
-        path = await self.youtube.download(cand, self.cfg.downloads_dir / fetch.id, fetch)
+        path = await self.elsewhere[cand.source].download(cand, self.cfg.downloads_dir / fetch.id, fetch)
         fetch.finished = time.monotonic()
         fmt = youtube_audio.format_of(path)
         if not fmt or not valid_audio(path, fmt):
             path.unlink(missing_ok=True)
-            fetch.error = 'YouTube sent something that isn\'t audio'
+            fetch.error = f'{matching.SOURCE_LABELS[cand.source]} sent something that isn\'t audio'
             fetch.phase = 'failed'
             return
         size = path.stat().st_size

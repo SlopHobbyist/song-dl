@@ -6,8 +6,9 @@ for a few hundred songs. An import is for thousands: it doesn't need a page
 open, it is written to disk and carries on after a restart, and the songs it
 finds go straight into the server queue, so nothing it found can expire.
 
-A song Soulseek doesn't have is looked for on YouTube next, when the admin
-ticked it (see youtube_audio.py), and its best audio is queued instead.
+A song Soulseek doesn't have is looked for on SoundCloud, then YouTube, when
+the admin ticked them (see soundcloud_audio.py, youtube_audio.py), and its
+best audio is queued instead.
 
 It is slow on purpose. Soulseek bans clients that search too fast, so every
 search waits its turn in the engine's SearchLimiter, behind visitors' searches
@@ -29,7 +30,7 @@ import time
 from .engine import IMPORT, SEARCH_WINDOW, SEARCHES_PER_WINDOW, Engine
 from .errors import UserError
 from .jobs import Entry
-from .matching import SOURCE_LABELS
+from .matching import ELSEWHERE, SOURCE_LABELS, more_after
 from .playlist import Track
 from .server_queue import ServerQueue, normalize_folder
 from .slskd import SlskdError
@@ -321,8 +322,10 @@ class Importer:
                     log.warning('import %r paused: %s', imp.name, e)
                     return
                 t.found.append(fmt)
-            if not t.found and 'youtube' in imp.sources:
-                if not await self._youtube(imp, t):
+            for source in (s for s in ELSEWHERE if s in imp.sources):
+                if t.found:
+                    break
+                if not await self._elsewhere(imp, t, source):
                     return
             t.state = 'found' if t.found else 'missing'
             t.note = ''
@@ -340,12 +343,13 @@ class Importer:
         finally:
             self._changed()
 
-    async def _youtube(self, imp: Import, t: ImportTrack):
-        """Queues the song's best audio from YouTube, if YouTube has it. False when the import had to stop."""
+    async def _elsewhere(self, imp: Import, t: ImportTrack, source):
+        """Queues the song's best audio from SoundCloud or YouTube, if it's there. False when the
+        import had to stop."""
         try:
-            cands = await self.engine.find_on_youtube(t.track)
+            cands = await self.engine.find_elsewhere(source, t.track, more=more_after(source, imp.sources))
         except UserError as e:
-            log.info('import: youtube search for %r failed: %s', t.track.label, e)
+            log.info('import: %s search for %r failed: %s', source, t.track.label, e)
             return True
         if not cands:
             return True
@@ -358,7 +362,7 @@ class Importer:
             imp.next = 0
             log.warning('import %r paused: %s', imp.name, e)
             return False
-        t.found.append('youtube')
+        t.found.append(source)
         return True
 
     def _retry_later(self, imp, t):

@@ -257,3 +257,6 @@ main:focus { outline: none; }
   .queue-table .song-cell .text-caption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .progress-cell { min-width: 0; }
 }
+
+/* The Sources button is just its icon, square to sit beside the other big buttons */
+[data-sources-button] { width: var(--size-control-lg); padding-inline: 0; flex: none; }

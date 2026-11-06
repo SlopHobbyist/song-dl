@@ -3,7 +3,7 @@ scanning a playlist, and fetching a file to hand to the visitor.
 
 Each search or scan looks in the sources the visitor ticked, in order
 (matching.SOURCES), and stops at the first that has the song: Soulseek in
-every format asked for, then YouTube's best audio.
+every format asked for, then SoundCloud's best stream, then YouTube's best audio.
 
 A search or scan registers an Entry for every file it finds: the ranked list of
 copies of one song in one format. The browser downloads an Entry, or an admin
@@ -34,6 +34,7 @@ DOWNLOAD_IDLE = 180           # ...and a running download. Long enough for a bac
 SEARCH_SLOTS = 4              # playlist searches running at once, across all users
 MAX_SCANS = 3                 # playlists scanned at once
 MAX_DOWNLOADS_PER_IP = 8      # files one visitor can be fetching at once
+ELSEWHERE = matching.ELSEWHERE
 ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
@@ -82,7 +83,7 @@ class Entry:
             'filename': f'{file_stem(self.title, self.artist)}{c.ext}',
             'warning': warning,
             'source': c.source,
-            'from': c.username if c.source == 'youtube' else None,   # the channel
+            'from': c.username if c.source != 'soulseek' else None,   # the channel or account
             'link': c.url,
         }
 
@@ -130,15 +131,15 @@ class SearchJob(Job):
         self.formats = formats
         self.sources = list(sources)
         self.video = video   # the YouTube video the search came from, if it came from a link
-        self.status = 'Searching Soulseek' if 'soulseek' in self.sources else 'Searching YouTube'
+        self.status = f'Searching {matching.SOURCE_LABELS[self.sources[0]]}'
         self.found = {}     # format -> Entry
         self.missing = []   # formats nothing was found in on Soulseek
-        self.youtube = None  # the Entry found on YouTube instead
+        self.elsewhere = None  # the Entry found on SoundCloud or YouTube instead
 
     def view(self):
         results = [self.found[f].view() for f in self.formats if f in self.found]
-        if self.youtube:
-            results.append(self.youtube.view())
+        if self.elsewhere:
+            results.append(self.elsewhere.view())
         first = results[0] if results else {}
         return {
             'state': self.state,
@@ -160,14 +161,13 @@ class ScanTrack:
     def __init__(self, track: Track):
         self.track = track
         self.state = 'pending'
-        self.found = {}      # format -> Entry
+        self.found = {}      # format, or 'soundcloud' / 'youtube' -> Entry
 
     def view(self, formats):
         for entry in self.found.values():
             entry.touch()   # kept while the scan is on screen, however long it took
         results = [self.found[f].view() for f in formats if f in self.found]
-        if 'youtube' in self.found:
-            results.append(self.found['youtube'].view())
+        results += [self.found[s].view() for s in ELSEWHERE if s in self.found]
         return {
             'title': self.track.title,
             'artist': self.track.artist,
@@ -302,13 +302,26 @@ class Manager:
                 job.found[fmt] = self._register(
                     ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
                     meta.get('artist') or '', meta.get('album') or '')
-        if not job.found and 'youtube' in job.sources:
-            job.status = 'Not on Soulseek. Searching YouTube' if 'soulseek' in job.sources else 'Searching YouTube'
-            cands = await self.engine.youtube.find(job.query, video=job.video)
+        tried = ['Soulseek'] if 'soulseek' in job.sources else []
+        error = None
+        for source in (s for s in ELSEWHERE if s in job.sources):
+            if job.found or job.elsewhere:
+                break
+            label = matching.SOURCE_LABELS[source]
+            job.status = f'Not on {" or ".join(tried)}. Searching {label}' if tried else f'Searching {label}'
+            tried.append(label)
+            try:
+                cands = await self.engine.elsewhere[source].find(
+                    job.query, video=job.video if source == 'youtube' else None, more=matching.more_after(source, job.sources))
+            except UserError as e:   # couldn't search there; the next place may still have it
+                error = e
+                continue
             if cands:
                 meta = cands[0].meta
-                job.youtube = self._register(cands, cands[0].fmt, meta.get('title') or job.query,
-                                             meta.get('artist') or '', meta.get('album') or '')
+                job.elsewhere = self._register(cands, cands[0].fmt, meta.get('title') or job.query,
+                                               meta.get('artist') or '', meta.get('album') or '')
+        if error and not job.found and not job.elsewhere:
+            raise error
         job.status = 'Done'
         job.finish()
 
@@ -352,21 +365,23 @@ class Manager:
 
         if 'soulseek' in job.sources:
             await asyncio.gather(*(one(f) for f in job.formats))
-        if not st.found and 'youtube' in job.sources:
+        for source in (s for s in ELSEWHERE if s in job.sources):
+            if st.found:
+                break
             st.state = 'searching'
             try:
-                cands = await self.engine.find_on_youtube(st.track)
+                cands = await self.engine.find_elsewhere(source, st.track, more=matching.more_after(source, job.sources))
             except UserError as e:
-                log.info('youtube search for %r failed: %s', st.track.label, e)
+                log.info('%s search for %r failed: %s', source, st.track.label, e)
                 cands = []
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception('youtube search for %r crashed', st.track.label)
+                log.exception('%s search for %r crashed', source, st.track.label)
                 cands = []
             if cands:
-                st.found['youtube'] = self._register(cands, cands[0].fmt, st.track.title, st.track.artist,
-                                                     st.track.album)
+                st.found[source] = self._register(cands, cands[0].fmt, st.track.title, st.track.artist,
+                                                  st.track.album)
         st.state = 'found' if st.found else 'missing'
         job.updated = time.monotonic()
 

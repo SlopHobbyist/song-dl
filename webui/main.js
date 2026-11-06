@@ -268,12 +268,18 @@
   }
 
   /* ------------------------------------------------------------ Sources
-     Where to look for a song, in order: Soulseek, then SoundCloud (still to
-     come), then YouTube. Ticked in the Sources dialog, remembered in this
+     Where to look for a song, in order: Soulseek, then SoundCloud, then
+     YouTube. Ticked in the Sources dialog, remembered in this
      browser, and used by searches, scans and imports alike. */
 
   var SOURCE_NAMES = { soulseek: 'Soulseek', soundcloud: 'SoundCloud', youtube: 'YouTube' };
-  var DEFAULT_SOURCES = ['soulseek', 'youtube'];
+  var DEFAULT_SOURCES = ['soulseek', 'soundcloud', 'youtube'];
+
+  /* The places a result was looked for before the one it came from: ["Soulseek"] */
+  function triedBefore(job, source) {
+    var at = job.sources.indexOf(SOURCE_NAMES[source]);
+    return at > 0 ? job.sources.slice(0, at) : [];
+  }
 
   /* The ticked sources, in the order they're tried. */
   function chosenSources() {
@@ -771,11 +777,14 @@
       bind('size', formatSize(sumSizes(found)));
       bind('filename', found.map(function (r) { return r.filename; }).join(', '));
       bind('dest', serverRoot + subfolder());
-      var youtube = found[0].source === 'youtube';
+      var source = found[0].source;
+      var where = SOURCE_NAMES[source] || 'Soulseek';
+      var elsewhere = source !== 'soulseek';
+      var tried = elsewhere ? triedBefore(job, source) : [];
       var from = $('[data-bind-source]', result);
-      if (youtube) {
-        from.innerHTML = 'YouTube · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
-          ' title="Open the video on YouTube">' + escapeHtml(found[0].from || 'the video') + '</a>';
+      if (elsewhere) {
+        from.innerHTML = where + ' · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
+          ' title="Open it on ' + where + '">' + escapeHtml(found[0].from || where) + '</a>';
       } else {
         from.textContent = 'Soulseek';
       }
@@ -783,7 +792,8 @@
       /* Formats that weren't found, and copies that may be another version */
       var tags = $('.row.row-tight', result);
       $$('.result-extra', tags).forEach(function (tag) { tag.remove(); });
-      var notes = youtube && job.missing.length ? ['Not on Soulseek'] : job.missing.map(function (f) { return 'No ' + f; });
+      var notes = elsewhere ? (tried.length ? ['Not on ' + tried.join(' or ')] : [])
+        : job.missing.map(function (f) { return 'No ' + f; });
       found.forEach(function (r) {
         if (r.warning && notes.indexOf(r.warning) < 0) notes.push(r.warning);
       });
@@ -796,24 +806,25 @@
       hideFetch($('[data-fetch-status]', result));
       result.hidden = false;
       var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
-        found.map(function (r) { return r.format; }).join(' and ') + (youtube ? ' from YouTube.' : '.') +
-        (job.missing.length ? (youtube ? ' Not on Soulseek as ' : ' Not found: ') + job.missing.join(', ') + '.' : '');
+        found.map(function (r) { return r.format; }).join(' and ') + (elsewhere ? ' from ' + where + '.' : '.') +
+        (elsewhere ? (tried.length ? ' Not on ' + tried.join(' or ') + '.' : '')
+          : job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
       announce(message);
     }
 
     function showEmpty(job) {
       var what = job.missing.join(', ');
       var soulseek = job.sources.indexOf('Soulseek') > -1;
-      var youtube = job.sources.indexOf('YouTube') > -1;
+      var others = job.sources.filter(function (s) { return s !== 'Soulseek'; });
       var message;
-      if (soulseek && youtube) {
-        message = 'Nobody on Soulseek is sharing ' + what + ' files matching that, and YouTube had nothing either. ' +
-          'Try just the song title, or check the spelling.';
+      if (soulseek && others.length) {
+        message = 'Nobody on Soulseek is sharing ' + what + ' files matching that, and ' + others.join(' and ') +
+          ' had nothing either. Try just the song title, or check the spelling.';
       } else if (soulseek) {
         message = 'Nobody on Soulseek is sharing ' + what + ' files matching that. Soulseek blocks searches for some ' +
-          'artists, so try just the song title, or turn on YouTube in Sources.';
+          'artists, so try just the song title, or turn on SoundCloud or YouTube in Sources.';
       } else {
-        message = 'YouTube had nothing matching that. Try just the song title, or check the spelling.';
+        message = others.join(' and ') + ' had nothing matching that. Try just the song title, or check the spelling.';
       }
       setText($('[data-bind="message"]', empty), message);
       empty.hidden = false;
@@ -843,7 +854,7 @@
       hideResults();
       var run = runs.search;
       setBusy(submit, 'Searching');
-      var searching = soulseek ? 'Searching Soulseek' : 'Searching YouTube';
+      var searching = 'Searching ' + SOURCE_NAMES[sources[0]];
       status.textContent = searching;
       loading.hidden = false;
       announce('Searching for ' + query);
@@ -923,16 +934,19 @@
     pending: '<span class="tag">Waiting</span>',
     searching: '<span class="tag tag-info">Searching</span>',
     found: '<span class="tag tag-success">Found</span>',
+    soundcloud: '<span class="tag tag-success" title="Not on Soulseek, so the best stream from SoundCloud">SoundCloud</span>',
     youtube: '<span class="tag tag-success" title="Not on Soulseek, so the best audio from YouTube">YouTube</span>',
     missing: '<span class="tag tag-danger">Not found</span>'
   };
 
-  function fromYouTube(song) {
-    return song.results.length > 0 && song.results[0].source === 'youtube';
+  /* "soundcloud" or "youtube" for a song found there instead of on Soulseek, else null */
+  function foundElsewhere(song) {
+    var source = song.results.length > 0 ? song.results[0].source : 'soulseek';
+    return source && source !== 'soulseek' ? source : null;
   }
 
   function scanTag(song) {
-    return SCAN_TAGS[song.state === 'found' && fromYouTube(song) ? 'youtube' : song.state];
+    return SCAN_TAGS[(song.state === 'found' && foundElsewhere(song)) || song.state];
   }
 
   function initScan() {
@@ -967,7 +981,7 @@
     function updateRows(job) {
       job.tracks.forEach(function (song, i) {
         var row = rows.children[i];
-        var signature = song.state + ':' + song.results.length + ':' + fromYouTube(song);
+        var signature = song.state + ':' + song.results.length + ':' + foundElsewhere(song);
         if (!row || row.getAttribute('data-state') === signature) return;
         row.setAttribute('data-state', signature);
         row.classList.toggle('is-missing', song.state === 'missing');
@@ -981,8 +995,12 @@
       var found = job.tracks.filter(function (t) { return t.state === 'found'; }).length;
       var missing = job.tracks.filter(function (t) { return t.state === 'missing'; }).length;
       var left = job.total - found - missing;
-      var youtube = job.tracks.filter(function (t) { return t.state === 'found' && fromYouTube(t); }).length;
-      var parts = ['<strong class="text-success">' + found + ' found</strong>' + (youtube ? ' (' + youtube + ' on YouTube)' : ''),
+      var elsewhere = ['soundcloud', 'youtube'].map(function (source) {
+        var count = job.tracks.filter(function (t) { return t.state === 'found' && foundElsewhere(t) === source; }).length;
+        return count ? count + ' on ' + SOURCE_NAMES[source] : '';
+      }).filter(Boolean);
+      var parts = ['<strong class="text-success">' + found + ' found</strong>' +
+        (elsewhere.length ? ' (' + elsewhere.join(', ') + ')' : ''),
         missing + ' not found'];
       if (job.state === 'running') parts.push(left + ' left to scan');
       parts.push(escapeHtml(lookedFor(job.formats, job.sources)));
@@ -1177,12 +1195,12 @@
 
   var refreshImports = null;   // set by initImports, so a new import shows at once
 
-  /* "WAV + FLAC", "WAV + FLAC, else YouTube" or "YouTube": what a scan or import looks for. */
+  /* "WAV + FLAC", "WAV + FLAC, else SoundCloud or YouTube" or "YouTube": what a scan or import looks for. */
   function lookedFor(formats, sources) {
-    var youtube = (sources || []).indexOf('YouTube') > -1;
     var soulseek = !sources || sources.indexOf('Soulseek') > -1;
+    var others = (sources || []).filter(function (s) { return s !== 'Soulseek'; });
     var text = soulseek ? formats.join(' + ') : '';
-    if (youtube) text += text ? ', else YouTube' : 'YouTube';
+    if (others.length) text += (text ? ', else ' : '') + others.join(' or ');
     return text;
   }
 

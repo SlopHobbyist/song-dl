@@ -152,7 +152,7 @@ async def test_nothing_anywhere(site, yt):
 
 
 async def test_sources_are_checked(site, yt):
-    for sources, message in ((['soundcloud'], 'SoundCloud'), (['napster'], 'Pick'), ([], 'Pick')):
+    for sources, message in ((['napster'], 'Pick'), ([], 'Pick')):
         res = await site.post('/api/search', json={'query': 'nobody never heard', 'formats': ['flac'], 'sources': sources})
         assert res.status == 400 and message in (await res.json())['error'], sources
     # Left out: Soulseek only, as before

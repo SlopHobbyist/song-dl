@@ -80,7 +80,7 @@
             </div>
           </fieldset>
           <div class="row row-tight">
-            <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" title="Where to look for songs"><span class="icon" aria-hidden="true">travel_explore</span> Sources</button>
+            <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
             <button class="button button-outlined button-lg" type="button" data-show-panel="playlist"><span class="icon" aria-hidden="true">upload_file</span> Playlist</button>
             <button class="button button-filled button-lg" type="submit"><span class="icon" aria-hidden="true">search</span> Search</button>
           </div>
@@ -224,22 +224,18 @@
   </section>
 </main>
 
-<dialog class="dialog dialog-sm" id="dlg-sources" aria-labelledby="dlg-sources-title" aria-describedby="dlg-sources-body">
+<dialog class="dialog dialog-sm" id="dlg-sources" aria-labelledby="dlg-sources-title">
   <div class="dialog-header">
     <span class="icon" aria-hidden="true">travel_explore</span>
-    <h2 class="dialog-title" id="dlg-sources-title">Where to look</h2>
+    <h2 class="dialog-title" id="dlg-sources-title">Sources</h2>
   </div>
   <div class="dialog-body">
-    <p class="text-body-2 text-muted" id="dlg-sources-body">Song-DL tries these in order and stops at the first one that has the song. Playlists use them too.</p>
-    <fieldset class="fieldset fieldset-bare mt-4">
-      <legend class="visually-hidden">Places to look</legend>
+    <fieldset class="fieldset fieldset-bare">
+      <legend class="visually-hidden">Sources</legend>
       <div class="choice-group">
-        <label class="choice"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek
-          <span class="choice-description">In the formats you pick: WAV, AIFF, FLAC or MP3.</span></span></label>
-        <label class="choice"><input type="checkbox" name="source" value="soundcloud" disabled><span class="choice-box"></span><span class="choice-label">SoundCloud <span class="tag">Coming soon</span>
-          <span class="choice-description">Not available yet.</span></span></label>
-        <label class="choice"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube
-          <span class="choice-description">The best audio YouTube has, usually Opus at about 130 kbps. Always lossy, whatever formats you pick.</span></span></label>
+        <label class="choice"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek</span></label>
+        <label class="choice"><input type="checkbox" name="source" value="soundcloud" checked><span class="choice-box"></span><span class="choice-label">SoundCloud</span></label>
+        <label class="choice"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube</span></label>
       </div>
     </fieldset>
   </div>

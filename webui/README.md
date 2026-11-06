@@ -8,7 +8,7 @@ This is a website that allows users to download songs.
 For regular non logged in users.
 - Type in a song name
 - Choose any of WAV, AIFF, FLAC, MP3 (checkboxes; WAV is on by default)
-- Sources button: a dialog to tick where to look, tried in order: Soulseek, SoundCloud (coming soon), YouTube.
+- Sources button: a dialog to tick where to look, tried in order: Soulseek, SoundCloud, YouTube.
   Remembered in the browser; scans and imports use it too
 - Press Search button
 - Shows found file info

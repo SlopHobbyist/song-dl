@@ -111,12 +111,8 @@ def parse_formats(raw):
     return [f for f in matching.FORMATS if f in chosen]
 
 
-# Sources the site can look in so far; SoundCloud is still to come
-AVAILABLE_SOURCES = ('soulseek', 'youtube')
-
-
 def parse_sources(raw):
-    """["soulseek", "youtube"] or "soulseek,youtube" -> where to look, in the order they're tried.
+    """["soulseek", "soundcloud"] or "soulseek,youtube" -> where to look, in the order they're tried.
     Left out, only Soulseek."""
     if raw is None or raw == '':
         return ['soulseek']
@@ -128,9 +124,7 @@ def parse_sources(raw):
     if not chosen:
         raise UserError('Pick at least one place to look.')
     if chosen - set(matching.SOURCES):
-        raise UserError('Pick Soulseek or YouTube.')
-    if chosen - set(AVAILABLE_SOURCES):
-        raise UserError('SoundCloud isn\'t available yet.')
+        raise UserError('Pick Soulseek, SoundCloud or YouTube.')
     return [s for s in matching.SOURCES if s in chosen]
 
 
