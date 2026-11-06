@@ -156,7 +156,7 @@
         var on = !djMode();
         try { localStorage.setItem('songdl-dj', on ? 'on' : 'off'); } catch (e) {}
         applyDj();
-        toast(on ? 'DJ mode on: songs come as WAV (or CBR MP3) that every CDJ plays' : 'DJ mode off',
+        toast(on ? 'DJ mode on: songs converted to play on all CDJ/XDJs' : 'DJ mode off',
           on ? 'success' : undefined);
       });
     });
