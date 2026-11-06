@@ -318,6 +318,7 @@
   }
 
   /* --------------------------------------------------- Playlist links
+     A link to a single YouTube video becomes a search for its song.
      A Spotify or YouTube playlist link, pasted in the song search box or the playlist
      panel's link field, is read by the server into a CSV of the whole
      playlist. The CSV then stands in for an uploaded file: it can be saved
@@ -327,7 +328,9 @@
   var SPOTIFY_OTHER = /\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:track|album|artist|episode|show)\//;
   /* youtube.com/playlist?list=, watch?v=…&list=, youtu.be/…?list=, music.youtube.com/… */
   var YOUTUBE_PLAYLIST = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)\/\S*?[?&]list=[A-Za-z0-9_-]{10,64}/;
-  var YOUTUBE_OTHER = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch|shorts|@|channel)|youtu\.be\/)/;
+  /* A single video: watch?v=, youtu.be/, shorts/, live/, embed/ (a link that names a playlist is the playlist's) */
+  var YOUTUBE_VIDEO = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch\?(?:\S*?&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)[A-Za-z0-9_-]{11}(?![A-Za-z0-9_-])/;
+  var YOUTUBE_OTHER = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?youtube\.com\/(?:@|channel\/|c\/|user\/)/;
 
   function isPlaylistLink(text) { return SPOTIFY_PLAYLIST.test(text || '') || YOUTUBE_PLAYLIST.test(text || ''); }
   function linkSource(text) { return YOUTUBE_PLAYLIST.test(text || '') ? 'YouTube' : 'Spotify'; }
@@ -440,6 +443,27 @@
       }
     }
 
+    /* A single video: ask the server which song it is, then search for that */
+    async function searchVideo(url) {
+      var form = $('#search-form');
+      var submit = form && $('button[type="submit"]', form);
+      if (!form || !q) return;
+      if (form.hidden) showPanel('search', q);
+      q.value = url;
+      setBusy(submit, 'Reading video');
+      announce('Reading the video from YouTube');
+      try {
+        var res = await api('POST', '/api/video-link', { url: url });
+        setIdle(submit);
+        if (q.value.trim() !== url) return;   // typed over while it was read
+        q.value = res.query;
+        form.requestSubmit();
+      } catch (e) {
+        setIdle(submit);
+        toast(e.message, 'danger');
+      }
+    }
+
     function tryLink(text, fromSearch) {
       text = (text || '').trim();
       if (isPlaylistLink(text)) {
@@ -450,8 +474,13 @@
         if (!linked || linked.url !== text) read(text);
         return true;
       }
+      if (YOUTUBE_VIDEO.test(text)) {
+        if (!fromSearch) field.value = '';
+        searchVideo(text);
+        return true;
+      }
       if (SPOTIFY_OTHER.test(text) || YOUTUBE_OTHER.test(text)) {
-        toast('Only playlist links work, not single songs, videos, albums or channels.', 'warning');
+        toast('Only playlist links and YouTube video links work, not Spotify songs, albums, artists or channels.', 'warning');
         return true;
       }
       return false;
@@ -475,7 +504,7 @@
       if (event.key !== 'Enter') return;
       event.preventDefault();
       if (!field.value.trim()) return;
-      if (!tryLink(field.value, false)) toast('That isn\'t a Spotify or YouTube playlist link.', 'warning');
+      if (!tryLink(field.value, false)) toast('That isn\'t a Spotify or YouTube playlist link, or a YouTube video link.', 'warning');
     });
     field.addEventListener('change', function () {
       if (isPlaylistLink(field.value)) tryLink(field.value);

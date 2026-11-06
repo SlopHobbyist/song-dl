@@ -1,4 +1,5 @@
-"""Turns a YouTube (or YouTube Music) playlist link into a CSV of its songs.
+"""Turns a YouTube (or YouTube Music) playlist link into a CSV of its songs,
+and a single video's link into the song to search for.
 
 yt-dlp lists the playlist without downloading anything, following YouTube's
 pages to the end, so the CSV has every video: public and unlisted playlists
@@ -13,10 +14,14 @@ those are split here: "Artist - Song (Official Video)", "Song" from an
 
 import asyncio
 import csv
+import html
 import io
+import json
 import logging
 import re
 from dataclasses import dataclass, field
+
+import aiohttp
 
 from .errors import UserError
 
@@ -29,6 +34,18 @@ READS = 2             # playlists read at once
 # youtube.com/playlist?list=, watch?v=…&list=, youtu.be/…?list=, music.youtube.com/…
 PLAYLIST = re.compile(
     r'(?:^|[/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)/\S*?[?&]list=([A-Za-z0-9_-]{10,64})')
+# watch?v=, youtu.be/, shorts/, live/, embed/; also on m. and music.
+VIDEO = re.compile(
+    r'(?:^|[/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com/(?:watch\?(?:\S*?&)?v=|shorts/|live/|embed/)|youtu\.be/)'
+    r'([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])')
+OEMBED_URL = 'https://www.youtube.com/oembed'
+WATCH_URL = 'https://www.youtube.com/watch?v={id}'
+USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+              'Chrome/130.0 Safari/537.36')
+META_TITLE = re.compile(r'<meta name="title" content="([^"]*)"')
+META_CHANNEL = re.compile(r'"ownerChannelName":"((?:[^"\\]|\\.)*)"')
+VIDEO_NOT_FOUND = 'YouTube couldn\'t find that video. Check the link, and that the video isn\'t private.'
+
 COLUMNS = ['Video URL', 'Track Name', 'Artist Name(s)', 'Album Name', 'Duration (ms)', 'Video Title', 'Channel']
 
 NOT_FOUND = ('YouTube couldn\'t find that playlist. Check the link, and that the playlist isn\'t '
@@ -40,6 +57,15 @@ MIX = ('That\'s a YouTube Mix, which YouTube makes up as you listen, so it can\'
 def playlist_id(text):
     """The playlist ID in a YouTube link, or None."""
     m = PLAYLIST.search(str(text or ''))
+    return m.group(1) if m else None
+
+
+def video_id(text):
+    """The video ID in a link to a single YouTube video, or None. A video link
+    that names a playlist too is the playlist's (see playlist_id)."""
+    if playlist_id(text):
+        return None
+    m = VIDEO.search(str(text or ''))
     return m.group(1) if m else None
 
 
@@ -197,6 +223,45 @@ def _extract(pid):
             if re.search(r'does not exist|private|unavailable|not found|404', text, re.I):
                 raise UserError(NOT_FOUND, 404)
             raise UserError('Couldn\'t read that playlist from YouTube. Please try again in a minute.', 502)
+
+
+@dataclass
+class Video:
+    id: str
+    title: str      # the video's own title
+    channel: str
+    artist: str     # as split() reads them
+    song: str
+
+
+async def video(vid):
+    """The song a single video is: its title and channel from YouTube's oEmbed answer,
+    or from the watch page for a video whose owner turned embedding off."""
+    url = WATCH_URL.format(id=vid)
+    timeout = aiohttp.ClientTimeout(total=15)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout, headers={'User-Agent': USER_AGENT}) as http:
+            async with http.get(OEMBED_URL, params={'url': url, 'format': 'json'}) as res:
+                if res.status == 200:
+                    data = await res.json(content_type=None)
+                    title, channel = data.get('title') or '', data.get('author_name') or ''
+                elif res.status in (400, 404):
+                    raise UserError(VIDEO_NOT_FOUND, 404)
+                else:
+                    # 401/403: embedding is off, but the watch page still says what it is
+                    async with http.get(url, headers={'Accept-Language': 'en'}) as page:
+                        text = await page.text()
+                    t, c = META_TITLE.search(text), META_CHANNEL.search(text)
+                    if not t or not t.group(1):
+                        raise UserError(VIDEO_NOT_FOUND, 404)
+                    title = html.unescape(t.group(1))
+                    channel = json.loads(f'"{c.group(1)}"') if c else ''
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+        log.warning('youtube video %s: %r', vid, e)
+        raise UserError('Couldn\'t reach YouTube. Please try again in a minute.', 502)
+    artist, song = split(title, channel)
+    log.info('youtube video %s: %r by %r -> %r / %r', vid, title, channel, artist, song)
+    return Video(vid, title, channel, artist, song)
 
 
 class YouTube:

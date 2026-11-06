@@ -2,6 +2,9 @@
 titles are real ones from a public playlist."""
 
 import pytest
+import pytest_asyncio
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from songdl import playlist, youtube
 from songdl.errors import UserError
@@ -124,4 +127,66 @@ async def test_playlist_link_endpoint_reads_youtube(site, fake_ytdlp):
     assert [t['state'] for t in job['tracks']] == ['found', 'found', 'missing']
 
     res = await site.post('/api/playlist-link', json={'url': 'https://www.youtube.com/watch?v=HU7KlDJVINc'})
+    assert res.status == 400
+
+
+# Single videos ------------------------------------------------------------
+
+def test_single_video_links_are_recognised():
+    for link in ('https://www.youtube.com/watch?v=SMVqAJcX9I4',
+                 'https://youtu.be/SMVqAJcX9I4?si=qEkpPHs7BJS4Lpkg',
+                 'https://music.youtube.com/watch?v=SMVqAJcX9I4',
+                 'https://m.youtube.com/watch?feature=share&v=SMVqAJcX9I4',
+                 'https://www.youtube.com/shorts/SMVqAJcX9I4'):
+        assert youtube.video_id(link) == 'SMVqAJcX9I4', link
+    # With a playlist attached it is the playlist's
+    assert youtube.video_id('https://www.youtube.com/watch?v=SMVqAJcX9I4&list=PLKxmRL6AnoXI&index=1') is None
+    assert youtube.video_id('https://youtu.be/playlist?list=PLKxmRL6AnoXI') is None
+
+
+@pytest_asyncio.fixture
+async def fake_youtube(monkeypatch):
+    """oEmbed answers for one video, refuses another (embedding off), whose watch page still says what it is."""
+    async def oembed(request):
+        vid = request.query['url'].rsplit('=', 1)[1]
+        if vid == 'SMVqAJcX9I4':
+            return web.json_response({'title': 'France Joli - Gonna Get Over You', 'author_name': 'UnidiscMusic'})
+        if vid == 'noembed0000':
+            return web.Response(status=401)
+        return web.Response(status=400, text='Bad Request')
+
+    async def watch(request):
+        return web.Response(content_type='text/html', text=(
+            '<meta name="title" content="Gonna Get Over You &amp; More">'
+            '<script>var x = {"ownerChannelName":"France Joli - Topic"};</script>'))
+
+    app = web.Application()
+    app.router.add_get('/oembed', oembed)
+    app.router.add_get('/watch', watch)
+    server = TestServer(app)
+    await server.start_server()
+    base = str(server.make_url('')).rstrip('/')
+    monkeypatch.setattr(youtube, 'OEMBED_URL', base + '/oembed')
+    monkeypatch.setattr(youtube, 'WATCH_URL', base + '/watch?v={id}')
+    yield
+    await server.close()
+
+
+async def test_a_video_is_read_as_one_song(fake_youtube):
+    found = await youtube.video('SMVqAJcX9I4')
+    assert (found.artist, found.song) == ('France Joli', 'Gonna Get Over You')
+    # Embedding turned off: read from the watch page instead
+    found = await youtube.video('noembed0000')
+    assert (found.artist, found.song, found.channel) == ('France Joli', 'Gonna Get Over You & More', 'France Joli - Topic')
+    with pytest.raises(UserError) as e:
+        await youtube.video('zzzzzzzzzzz')
+    assert e.value.status == 404
+
+
+async def test_video_link_endpoint_gives_the_search(site, fake_youtube):
+    res = await site.post('/api/video-link', json={'url': 'https://youtu.be/SMVqAJcX9I4?si=qEkpPHs7BJS4Lpkg'})
+    assert res.status == 200, await res.text()
+    body = await res.json()
+    assert (body['query'], body['artist'], body['song']) == ('France Joli Gonna Get Over You', 'France Joli', 'Gonna Get Over You')
+    res = await site.post('/api/video-link', json={'url': 'https://www.youtube.com/playlist?list=PLKxmRL6AnoXI'})
     assert res.status == 400

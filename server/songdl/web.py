@@ -283,6 +283,18 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'maxImport': imports.MAX_TRACKS,
         })
 
+    async def video_link(request):
+        """A link to a single YouTube video -> the song search for it."""
+        data = await read_json(request)
+        vid = youtube.video_id(str(data.get('url') or '').strip()[:2000])
+        if not vid:
+            raise UserError('That isn\'t a link to a YouTube video.')
+        limit(request, 'link')
+        found = await youtube.video(vid)
+        query = playlist.Track(found.song, found.artist).query[:MAX_QUERY].strip()
+        return web.json_response({'query': query or found.title[:MAX_QUERY], 'artist': found.artist,
+                                  'song': found.song, 'title': found.title, 'channel': found.channel})
+
     async def poll_scan(request):
         return web.json_response(find(manager.scans, request, 'playlist scan').view())
 
@@ -485,6 +497,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/search', start_search),
         web.get('/api/search/{id}', poll_search),
         web.post('/api/playlist-link', playlist_link),
+        web.post('/api/video-link', video_link),
         web.post('/api/scan', start_scan),
         web.get('/api/scan/{id}', poll_scan),
         web.delete('/api/scan/{id}', cancel_scan),
