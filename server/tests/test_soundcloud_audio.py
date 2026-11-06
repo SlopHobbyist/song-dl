@@ -215,3 +215,38 @@ async def test_a_poor_copy_is_left_to_youtube(site, sc, yt):
     # ...but taken when there's nowhere else to look
     job = await search(site, 'nobody never heard', [], ['soundcloud'])
     assert [(r['source'], r['quality']) for r in job['results']] == [('soundcloud', '96 kbps')]
+
+
+# The order the visitor put the sources in
+
+async def test_sources_are_tried_in_the_order_given(site, sc, yt):
+    job = await search(site, 'nobody never heard', ['flac'], ['youtube', 'soundcloud', 'soulseek'])
+    assert job['sources'] == ['YouTube', 'SoundCloud', 'Soulseek']
+    assert [r['source'] for r in job['results']] == ['youtube'] and sc.searches == []
+
+
+async def test_soulseek_can_come_after_soundcloud(site, sc, yt):
+    job = await search(site, 'daft punk digital love', ['flac'], ['soundcloud', 'soulseek', 'youtube'])
+    assert [r['source'] for r in job['results']] == ['soulseek']
+    assert sc.searches == ['daft punk digital love'] and yt.searches == []
+
+
+async def test_a_scan_tries_sources_in_the_order_given(site, sc, yt):
+    csv = 'title,artist,duration\nDigital Love,Daft Punk,301\nNever Heard,Nobody,240\n'.encode()
+    res = await site.post('/api/scan', params={'formats': 'flac', 'sources': 'soundcloud,soulseek', 'name': 't.csv'},
+                          data=csv)
+    assert res.status == 200, await res.text()
+    sid = (await res.json())['id']
+    job = await wait_for(lambda: _json(site.get(f'/api/scan/{sid}')), lambda v: v['state'] != 'running')
+    assert job['sources'] == ['SoundCloud', 'Soulseek']
+    assert [[r['source'] for r in t['results']] for t in job['tracks']] == [['soulseek'], ['soundcloud']]
+    assert sorted(sc.searches) == ['Daft Punk Digital Love', 'Nobody Never Heard'] and yt.searches == []
+
+
+async def test_an_import_tries_sources_in_the_order_given(admin, sc, yt):
+    res = await admin.post('/api/imports', json={
+        'csv': 'title,artist,duration\nNever Heard,Nobody,240\n', 'name': 'mix', 'formats': ['flac'],
+        'sources': ['youtube', 'soundcloud', 'soulseek'], 'folder': 'Mix'})
+    assert res.status == 200, await res.text()
+    items = (await wait_for(lambda: queue_view(admin), lambda v: v['items']))['items']
+    assert [i['source'] for i in items] == ['youtube'] and sc.searches == []

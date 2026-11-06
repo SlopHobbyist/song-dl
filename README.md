@@ -15,7 +15,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 - Auto retries a different uploader if slow or stuck
 - Optional captcha solver for direct messages
 - Can paste Spotify and YouTube links to grab song lists automatically
-- Falls back to SoundCloud, then YouTube, when Soulseek doesn't have a song (pick where to look under **Sources**)
+- Checks SoulSeek, then SoundCloud, then YouTube. Can change order in sources menu.
 
 ### Limitations
 - Soulseek limits searches to 34 every 220 seconds. Some stuff may take a while.

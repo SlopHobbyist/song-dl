@@ -26,14 +26,14 @@ EXTENSIONS = {'wav': ('.wav',), 'aiff': ('.aiff', '.aif'), 'flac': ('.flac',), '
               'opus': ('.opus',), 'm4a': ('.m4a',), 'ogg': ('.ogg',)}
 LABELS = {'wav': 'WAV', 'aiff': 'AIFF', 'flac': 'FLAC', 'mp3': 'MP3', 'opus': 'Opus', 'm4a': 'M4A', 'ogg': 'OGG'}
 LOSSY = {'mp3', 'opus', 'm4a', 'ogg'}
-SOURCES = ('soulseek', 'soundcloud', 'youtube')   # where to look, in the order they're tried
+SOURCES = ('soulseek', 'soundcloud', 'youtube')   # where to look; the visitor picks the order they're tried in
 SOURCE_LABELS = {'soulseek': 'Soulseek', 'soundcloud': 'SoundCloud', 'youtube': 'YouTube'}
-ELSEWHERE = SOURCES[1:]   # ...when Soulseek doesn't have the song
+ELSEWHERE = SOURCES[1:]   # the ones that aren't Soulseek
 
 
 def more_after(source, sources):
-    """Whether one of `sources` is still to be tried after `source`."""
-    return any(s in sources for s in SOURCES[SOURCES.index(source) + 1:])
+    """Whether another of `sources` (in the order they're tried) is still to come after `source`."""
+    return source in sources and sources.index(source) < len(sources) - 1
 
 
 # Words that mark a different version of a song than the one usually wanted.

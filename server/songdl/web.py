@@ -112,20 +112,21 @@ def parse_formats(raw):
 
 
 def parse_sources(raw):
-    """["soulseek", "soundcloud"] or "soulseek,youtube" -> where to look, in the order they're tried.
-    Left out, only Soulseek."""
+    """["youtube", "soulseek"] or "soulseek,youtube" -> where to look, in the order given, which is
+    the order they're tried in. Left out, only Soulseek."""
     if raw is None or raw == '':
         return ['soulseek']
     if isinstance(raw, str):
         raw = raw.split(',')
     if not isinstance(raw, list):
         raise UserError('Pick at least one place to look.')
-    chosen = {str(s).strip().lower() for s in raw} - {''}
+    chosen = list(dict.fromkeys(str(s).strip().lower() for s in raw))
+    chosen = [s for s in chosen if s]
     if not chosen:
         raise UserError('Pick at least one place to look.')
-    if chosen - set(matching.SOURCES):
+    if set(chosen) - set(matching.SOURCES):
         raise UserError('Pick Soulseek, SoundCloud or YouTube.')
-    return [s for s in matching.SOURCES if s in chosen]
+    return chosen
 
 
 def parse_search_formats(raw, sources):

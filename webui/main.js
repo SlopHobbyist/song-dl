@@ -268,9 +268,9 @@
   }
 
   /* ------------------------------------------------------------ Sources
-     Where to look for a song, in order: Soulseek, then SoundCloud, then
-     YouTube. Ticked in the Sources dialog, remembered in this
-     browser, and used by searches, scans and imports alike. */
+     Where to look for a song, and in what order: the first that has it
+     wins. Ticked and dragged into order in the Sources dialog, remembered
+     in this browser, and used by searches, scans and imports alike. */
 
   var SOURCE_NAMES = { soulseek: 'Soulseek', soundcloud: 'SoundCloud', youtube: 'YouTube' };
   var DEFAULT_SOURCES = ['soulseek', 'soundcloud', 'youtube'];
@@ -281,7 +281,7 @@
     return at > 0 ? job.sources.slice(0, at) : [];
   }
 
-  /* The ticked sources, in the order they're tried. */
+  /* The ticked sources, in the order they're tried (top to bottom in the dialog). */
   function chosenSources() {
     var boxes = $$('input[name="source"]');
     if (!boxes.length) return DEFAULT_SOURCES.slice();
@@ -291,16 +291,41 @@
 
   function usesSoulseek() { return chosenSources().indexOf('soulseek') > -1; }
 
+  function loadSaved(key) {
+    try {
+      var saved = JSON.parse(localStorage.getItem(key) || 'null');
+      return Array.isArray(saved) ? saved : null;
+    } catch (e) { return null; }
+  }
+
   function initSources() {
+    var list = $('[data-sources-list]');
     var boxes = $$('input[name="source"]');
-    if (!boxes.length) return;
-    var saved = null;
-    try { saved = JSON.parse(localStorage.getItem('songdl-sources') || 'null'); } catch (e) {}
-    if (Array.isArray(saved) && saved.length) {
-      boxes.forEach(function (box) { if (!box.disabled) box.checked = saved.indexOf(box.value) > -1; });
+    if (!list || !boxes.length) return;
+
+    /* Every source's place, ticked or not. Before there was an order, only the ticked ones
+       were saved, in the fixed order, which is as good a start as any */
+    var chosen = loadSaved('songdl-sources');
+    var order = loadSaved('songdl-source-order') || chosen || [];
+    order = order.filter(function (name) { return SOURCE_NAMES[name]; })
+      .concat(DEFAULT_SOURCES.filter(function (name) { return order.indexOf(name) < 0; }));
+    order.forEach(function (name) {
+      var item = $('[data-source="' + name + '"]', list);
+      if (item) list.appendChild(item);
+    });
+    if (chosen && chosen.length) {
+      boxes.forEach(function (box) { if (!box.disabled) box.checked = chosen.indexOf(box.value) > -1; });
     }
     if (!chosenSources().length) {
       boxes.forEach(function (box) { if (!box.disabled) box.checked = DEFAULT_SOURCES.indexOf(box.value) > -1; });
+    }
+
+    function save() {
+      var all = $$('[data-source]', list).map(function (item) { return item.getAttribute('data-source'); });
+      try {
+        localStorage.setItem('songdl-sources', JSON.stringify(chosenSources()));
+        localStorage.setItem('songdl-source-order', JSON.stringify(all));
+      } catch (e) {}
     }
 
     function apply() {
@@ -325,10 +350,13 @@
           box.checked = true;
           toast('Pick at least one place to look', 'warning');
         }
-        try { localStorage.setItem('songdl-sources', JSON.stringify(chosenSources())); } catch (e) {}
+        save();
         apply();
       });
     });
+    /* The kit's sortable list moves the rows itself (dragged, or by keyboard from the handle)
+       and doesn't say so, so watch for the rows changing places */
+    new MutationObserver(function () { save(); apply(); }).observe(list, { childList: true });
     apply();
   }
 
@@ -780,7 +808,7 @@
       var source = found[0].source;
       var where = SOURCE_NAMES[source] || 'Soulseek';
       var elsewhere = source !== 'soulseek';
-      var tried = elsewhere ? triedBefore(job, source) : [];
+      var tried = triedBefore(job, source);
       var from = $('[data-bind-source]', result);
       if (elsewhere) {
         from.innerHTML = where + ' · <a href="' + escapeHtml(found[0].link) + '" target="_blank" rel="noopener noreferrer"' +
@@ -792,8 +820,8 @@
       /* Formats that weren't found, and copies that may be another version */
       var tags = $('.row.row-tight', result);
       $$('.result-extra', tags).forEach(function (tag) { tag.remove(); });
-      var notes = elsewhere ? (tried.length ? ['Not on ' + tried.join(' or ')] : [])
-        : job.missing.map(function (f) { return 'No ' + f; });
+      var notes = (tried.length ? ['Not on ' + tried.join(' or ')] : [])
+        .concat(elsewhere ? [] : job.missing.map(function (f) { return 'No ' + f; }));
       found.forEach(function (r) {
         if (r.warning && notes.indexOf(r.warning) < 0) notes.push(r.warning);
       });
@@ -807,8 +835,8 @@
       result.hidden = false;
       var message = 'Found ' + (job.title || job.query) + (job.artist ? ' by ' + job.artist : '') + ', ' +
         found.map(function (r) { return r.format; }).join(' and ') + (elsewhere ? ' from ' + where + '.' : '.') +
-        (elsewhere ? (tried.length ? ' Not on ' + tried.join(' or ') + '.' : '')
-          : job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
+        (tried.length ? ' Not on ' + tried.join(' or ') + '.' : '') +
+        (!elsewhere && job.missing.length ? ' Not found: ' + job.missing.join(', ') + '.' : '');
       announce(message);
     }
 
@@ -933,9 +961,9 @@
   var SCAN_TAGS = {
     pending: '<span class="tag">Waiting</span>',
     searching: '<span class="tag tag-info">Searching</span>',
-    found: '<span class="tag tag-success">Found</span>',
-    soundcloud: '<span class="tag tag-success" title="Not on Soulseek, so the best stream from SoundCloud">SoundCloud</span>',
-    youtube: '<span class="tag tag-success" title="Not on Soulseek, so the best audio from YouTube">YouTube</span>',
+    found: '<span class="tag tag-success" title="Found on Soulseek">Found</span>',
+    soundcloud: '<span class="tag tag-success" title="The best stream from SoundCloud">SoundCloud</span>',
+    youtube: '<span class="tag tag-success" title="The best audio from YouTube">YouTube</span>',
     missing: '<span class="tag tag-danger">Not found</span>'
   };
 
@@ -1195,13 +1223,14 @@
 
   var refreshImports = null;   // set by initImports, so a new import shows at once
 
-  /* "WAV + FLAC", "WAV + FLAC, else SoundCloud or YouTube" or "YouTube": what a scan or import looks for. */
+  /* What a scan or import looks for, in the order it's tried: "WAV + FLAC", "WAV + FLAC, else
+     SoundCloud, else YouTube", "YouTube, else Soulseek WAV + FLAC" or "YouTube". */
   function lookedFor(formats, sources) {
-    var soulseek = !sources || sources.indexOf('Soulseek') > -1;
-    var others = (sources || []).filter(function (s) { return s !== 'Soulseek'; });
-    var text = soulseek ? formats.join(' + ') : '';
-    if (others.length) text += (text ? ', else ' : '') + others.join(' or ');
-    return text;
+    sources = sources || ['Soulseek'];
+    return sources.map(function (s, i) {
+      if (s !== 'Soulseek') return s;
+      return (i ? 'Soulseek ' : '') + formats.join(' + ');
+    }).join(', else ');
   }
 
   function initImportButton() {

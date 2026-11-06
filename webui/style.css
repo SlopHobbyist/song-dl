@@ -260,3 +260,10 @@ main:focus { outline: none; }
 
 /* The Sources button is just its icon, square to sit beside the other big buttons */
 [data-sources-button] { width: var(--size-control-lg); padding-inline: 0; flex: none; }
+
+/* Sources dialog: a sortable list, tried top to bottom. The checkbox label fills the row so
+   the whole row toggles it; only the handle drags. */
+.sources-hint { margin: 0 0 var(--space-3); }
+[data-sources-list] .sortable-item { padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2); }
+[data-sources-list] .choice { cursor: pointer; }
+[data-sources-list] .sortable-item:has(input:not(:checked)) .choice-label { color: var(--color-on-surface-muted); }

@@ -6,9 +6,10 @@ for a few hundred songs. An import is for thousands: it doesn't need a page
 open, it is written to disk and carries on after a restart, and the songs it
 finds go straight into the server queue, so nothing it found can expire.
 
-A song Soulseek doesn't have is looked for on SoundCloud, then YouTube, when
-the admin ticked them (see soundcloud_audio.py, youtube_audio.py), and its
-best audio is queued instead.
+Each song is looked for in the sources the admin ticked, in the order they put
+them in, and stops at the first that has it: Soulseek in every format asked
+for, or the best audio on SoundCloud or YouTube (see soundcloud_audio.py,
+youtube_audio.py).
 
 It is slow on purpose. Soulseek bans clients that search too fast, so every
 search waits its turn in the engine's SearchLimiter, behind visitors' searches
@@ -30,7 +31,7 @@ import time
 from .engine import IMPORT, SEARCH_WINDOW, SEARCHES_PER_WINDOW, Engine
 from .errors import UserError
 from .jobs import Entry
-from .matching import ELSEWHERE, SOURCE_LABELS, more_after
+from .matching import SOURCE_LABELS, more_after
 from .playlist import Track
 from .server_queue import ServerQueue, normalize_folder
 from .slskd import SlskdError
@@ -302,31 +303,19 @@ class Importer:
 
     async def _search(self, imp: Import, t: ImportTrack):
         try:
-            for fmt in imp.formats if 'soulseek' in imp.sources else ():
-                if fmt in t.found:
-                    continue
-                try:
-                    cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
-                except UserError as e:
-                    if e.status != 400:   # 400 is "No match found"
-                        log.info('import search for %r failed: %s', t.track.label, e)
-                    continue
-                entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
-                try:
-                    self.queue.add([entry], imp.folder, imp.by)
-                except UserError as e:
-                    # The queue is full, say: stop until someone makes room
-                    imp.state, imp.note = 'paused', str(e)
-                    t.state = 'pending'
-                    imp.next = 0
-                    log.warning('import %r paused: %s', imp.name, e)
+            # A song that was paused part way through Soulseek's formats only has the rest to get
+            order = ['soulseek'] if any(f in imp.formats for f in t.found) else imp.sources
+            for source in order:
+                if source == 'soulseek':
+                    ok = await self._soulseek(imp, t)
+                elif t.found:
+                    break
+                else:
+                    ok = await self._elsewhere(imp, t, source)
+                if not ok:
                     return
-                t.found.append(fmt)
-            for source in (s for s in ELSEWHERE if s in imp.sources):
                 if t.found:
                     break
-                if not await self._elsewhere(imp, t, source):
-                    return
             t.state = 'found' if t.found else 'missing'
             t.note = ''
             imp.run_done += 1
@@ -343,6 +332,33 @@ class Importer:
         finally:
             self._changed()
 
+    async def _soulseek(self, imp: Import, t: ImportTrack):
+        """Queues the song from Soulseek in every format it has. False when the import had to stop."""
+        for fmt in imp.formats:
+            if fmt in t.found:
+                continue
+            try:
+                cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
+            except UserError as e:
+                if e.status != 400:   # 400 is "No match found"
+                    log.info('import search for %r failed: %s', t.track.label, e)
+                continue
+            entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
+            try:
+                self.queue.add([entry], imp.folder, imp.by)
+            except UserError as e:
+                # The queue is full, say: stop until someone makes room
+                self._pause(imp, t, e)
+                return False
+            t.found.append(fmt)
+        return True
+
+    def _pause(self, imp, t, e):
+        imp.state, imp.note = 'paused', str(e)
+        t.state = 'pending'
+        imp.next = 0
+        log.warning('import %r paused: %s', imp.name, e)
+
     async def _elsewhere(self, imp: Import, t: ImportTrack, source):
         """Queues the song's best audio from SoundCloud or YouTube, if it's there. False when the
         import had to stop."""
@@ -357,10 +373,7 @@ class Importer:
         try:
             self.queue.add([entry], imp.folder, imp.by)
         except UserError as e:
-            imp.state, imp.note = 'paused', str(e)
-            t.state = 'pending'
-            imp.next = 0
-            log.warning('import %r paused: %s', imp.name, e)
+            self._pause(imp, t, e)
             return False
         t.found.append(source)
         return True

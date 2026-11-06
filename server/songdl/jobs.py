@@ -1,9 +1,9 @@
 """Jobs the browser starts with a POST and then polls: searching for a song,
 scanning a playlist, and fetching a file to hand to the visitor.
 
-Each search or scan looks in the sources the visitor ticked, in order
-(matching.SOURCES), and stops at the first that has the song: Soulseek in
-every format asked for, then SoundCloud's best stream, then YouTube's best audio.
+Each search or scan looks in the sources the visitor ticked, in the order they
+put them in, and stops at the first that has the song: Soulseek in every format
+asked for, SoundCloud's best stream, or YouTube's best audio.
 
 A search or scan registers an Entry for every file it finds: the ranked list of
 copies of one song in one format. The browser downloads an Entry, or an admin
@@ -134,7 +134,7 @@ class SearchJob(Job):
         self.status = f'Searching {matching.SOURCE_LABELS[self.sources[0]]}'
         self.found = {}     # format -> Entry
         self.missing = []   # formats nothing was found in on Soulseek
-        self.elsewhere = None  # the Entry found on SoundCloud or YouTube instead
+        self.elsewhere = None  # the Entry found on SoundCloud or YouTube, when that's where it was
 
     def view(self):
         results = [self.found[f].view() for f in self.formats if f in self.found]
@@ -288,28 +288,17 @@ class Manager:
         return job
 
     async def _search(self, job: SearchJob):
-        def status(text):
-            job.status = text
-
-        if 'soulseek' in job.sources:
-            rankings = await asyncio.gather(*(self.engine.search(job.query, f, status) for f in job.formats))
-            for fmt, ranking in zip(job.formats, rankings):
-                if not ranking.candidates:
-                    job.missing.append(fmt)
-                    continue
-                best = ranking.candidates[0]
-                meta = best.meta or {}
-                job.found[fmt] = self._register(
-                    ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
-                    meta.get('artist') or '', meta.get('album') or '')
-        tried = ['Soulseek'] if 'soulseek' in job.sources else []
+        tried = []
         error = None
-        for source in (s for s in ELSEWHERE if s in job.sources):
+        for source in job.sources:
             if job.found or job.elsewhere:
                 break
             label = matching.SOURCE_LABELS[source]
             job.status = f'Not on {" or ".join(tried)}. Searching {label}' if tried else f'Searching {label}'
             tried.append(label)
+            if source == 'soulseek':
+                await self._search_soulseek(job)
+                continue
             try:
                 cands = await self.engine.elsewhere[source].find(
                     job.query, video=job.video if source == 'youtube' else None, more=matching.more_after(source, job.sources))
@@ -324,6 +313,21 @@ class Manager:
             raise error
         job.status = 'Done'
         job.finish()
+
+    async def _search_soulseek(self, job: SearchJob):
+        def status(text):
+            job.status = text
+
+        rankings = await asyncio.gather(*(self.engine.search(job.query, f, status) for f in job.formats))
+        for fmt, ranking in zip(job.formats, rankings):
+            if not ranking.candidates:
+                job.missing.append(fmt)
+                continue
+            best = ranking.candidates[0]
+            meta = best.meta or {}
+            job.found[fmt] = self._register(
+                ranking.candidates, fmt, meta.get('title') or Path(best.basename).stem,
+                meta.get('artist') or '', meta.get('album') or '')
 
     # Playlist scan
 
@@ -363,11 +367,12 @@ class Manager:
                     return
                 st.found[fmt] = self._register(cands, fmt, st.track.title, st.track.artist, st.track.album)
 
-        if 'soulseek' in job.sources:
-            await asyncio.gather(*(one(f) for f in job.formats))
-        for source in (s for s in ELSEWHERE if s in job.sources):
+        for source in job.sources:
             if st.found:
                 break
+            if source == 'soulseek':
+                await asyncio.gather(*(one(f) for f in job.formats))
+                continue
             st.state = 'searching'
             try:
                 cands = await self.engine.find_elsewhere(source, st.track, more=matching.more_after(source, job.sources))

@@ -205,13 +205,27 @@
     <h2 class="dialog-title" id="dlg-sources-title">Sources</h2>
   </div>
   <div class="dialog-body">
+    <p class="text-caption text-muted sources-hint">Tried top to bottom until one has the song. Drag to change the order.</p>
     <fieldset class="fieldset fieldset-bare">
-      <legend class="visually-hidden">Sources</legend>
-      <div class="choice-group">
-        <label class="choice"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek</span></label>
-        <label class="choice"><input type="checkbox" name="source" value="soundcloud" checked><span class="choice-box"></span><span class="choice-label">SoundCloud</span></label>
-        <label class="choice"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube</span></label>
-      </div>
+      <legend class="visually-hidden">Sources, in the order they're tried</legend>
+      <ul class="sortable" data-reorder data-sources-list>
+        <li class="sortable-item" data-source="soulseek">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="soulseek" checked><span class="choice-box"></span><span class="choice-label">Soulseek</span></label>
+          <span class="sortable-position" aria-hidden="true"></span>
+        </li>
+        <li class="sortable-item" data-source="soundcloud">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="soundcloud" checked><span class="choice-box"></span><span class="choice-label">SoundCloud</span></label>
+          <span class="sortable-position" aria-hidden="true"></span>
+        </li>
+        <li class="sortable-item" data-source="youtube">
+          <button class="sortable-handle" type="button"><span class="icon" aria-hidden="true">drag_indicator</span></button>
+          <label class="choice sortable-item-text"><input type="checkbox" name="source" value="youtube" checked><span class="choice-box"></span><span class="choice-label">YouTube</span></label>
+          <span class="sortable-position" aria-hidden="true"></span>
+        </li>
+      </ul>
+      <p class="visually-hidden" data-reorder-status role="status" aria-live="polite"></p>
     </fieldset>
   </div>
   <div class="dialog-actions">

@@ -5,7 +5,7 @@ from songdl.auth import Auth
 from songdl.config import ConfigError, _admins
 from songdl.errors import UserError
 from songdl.server_queue import normalize_folder
-from songdl.web import parse_formats
+from songdl.web import parse_formats, parse_sources
 
 
 def response(user, *files, free=True, queue=0, speed=1_000_000):
@@ -206,3 +206,19 @@ def test_slskd_yml_shares_and_extra_settings(tmp_path):
 def dataclasses_replace(cfg, **changes):
     import dataclasses
     return dataclasses.replace(cfg, **changes)
+
+
+def test_sources_keep_the_order_given():
+    assert parse_sources(['YouTube', 'soulseek', 'youtube']) == ['youtube', 'soulseek']
+    assert parse_sources('soundcloud,soulseek') == ['soundcloud', 'soulseek']
+    assert parse_sources(None) == ['soulseek']
+    for bad in ([], ['napster'], ',', 3):
+        with pytest.raises(UserError):
+            parse_sources(bad)
+
+
+def test_more_after_follows_the_order_given():
+    assert matching.more_after('soulseek', ['youtube', 'soulseek', 'soundcloud'])
+    assert not matching.more_after('soundcloud', ['youtube', 'soulseek', 'soundcloud'])
+    assert matching.more_after('youtube', ['youtube', 'soundcloud'])
+    assert not matching.more_after('youtube', ['soulseek'])
