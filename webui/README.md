@@ -24,20 +24,25 @@ or
   each song is downloaded once, in the first format Soulseek has (WAV, else FLAC by default)
 - Press Upload and scan button
 - Shows list of songs, if they were found on the server or not
+- Not found button: saves the songs that weren't found as a .txt or .csv, to look for elsewhere
 - Press Individual Download button or Download All button
+- Download as dialog: Download all gives a Zip file or Separate files
 - Downloads from browser to their computer
 
-## Server Mode
-For admins logged in
-Same flows as the regular mode, except:
-- Choose a name for the subfolder where the files go
-- Files are downloaded to the server, not to the user
-- Can leave or refresh the page, or log in somewhere else, and queue is still there downloading
+## Admins
+Signed in admins use the same page. The menu shows Search, Downloads and Library.
+- Download as has a third choice, Separate files to Server: Download all and the row buttons save the songs on
+  the server, in `<server folder>/<playlist name>/`, not to the user
+- Import (shown next to Upload and scan with that choice) saves a playlist of any size in the background
+- Can leave or refresh the page, or log in somewhere else, and the queue is still there downloading
 
-## All
-For admins logged in.
-Shows all things queued and downloading currently.
+## Downloads
+`/downloads/`, for admins logged in.
+Shows all things queued and downloading currently, and the playlist imports.
 Can cancel resume and delete.
+
+## Library
+`/library/`, for admins logged in. A placeholder for now.
 
 ## Design
 Uses the vendored `web-design-wavefront`.

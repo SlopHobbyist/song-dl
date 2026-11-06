@@ -68,6 +68,9 @@ async def test_an_import_queues_every_song_it_finds(admin):
     text = await res.text()
     rows = text.lstrip('\ufeff').splitlines()
     assert rows[1:] == ['No Such Song,Nobody,,,WAV FLAC']
+    res = await admin.get(f'/api/imports/{iid}/missing.txt')
+    assert res.status == 200 and 'not%20found.txt' in res.headers['Content-Disposition']
+    assert (await res.text()).splitlines() == ['Nobody - No Such Song']
 
     # The songs it queued download on their own
     await wait_for(lambda: queue_view(admin), lambda q: all(i['status'] == 'done' for i in q['items']), timeout=30)

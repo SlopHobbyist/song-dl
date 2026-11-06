@@ -57,6 +57,16 @@ def normalize_folder(raw):
     return '/'.join(parts)
 
 
+def playlist_folder(name):
+    """The folder a playlist's songs are saved in: its name, made safe to be one folder
+    ("AC/DC: Hits?" -> "AC-DC- Hits"). Never empty, never more than one level."""
+    name = ILLEGAL.sub('-', str(name or ''))
+    name = ' '.join(name.split()).strip(' .')[:MAX_FOLDER].strip(' .')
+    if not name or STAGING.match(name.lower()):
+        name = f'Playlist {name}'.strip()
+    return name
+
+
 class QueueItem:
     def __init__(self, entry_id, cands, title, artist, album, fmt, folder, by):
         self.id = entry_id
@@ -241,6 +251,25 @@ class ServerQueue:
             raise UserError('That folder is outside the downloads folder.')
         root = self.cfg.server_folder
         return root.joinpath(*folder.split('/')) if folder else root
+
+    def folder_for(self, playlist):
+        """The folder for a playlist's songs (playlist_folder). When the downloads folder
+        sits inside the server folder (music/downloads), a playlist named after it gets
+        another name, so its songs never land among the visitors' downloads."""
+        folder = base = playlist_folder(playlist)
+        n = 1
+        while self._is_downloads(self.dest_dir(folder)):
+            n += 1
+            folder = f'{base} ({n})'
+        return folder
+
+    def _is_downloads(self, path: Path):
+        if path == self.cfg.downloads_dir:
+            return True
+        try:
+            return os.path.samefile(path, self.cfg.downloads_dir)
+        except OSError:
+            return False
 
     def _changed(self):
         self.dirty = True

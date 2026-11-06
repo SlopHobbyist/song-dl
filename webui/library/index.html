@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Library · Song-DL</title>
+<meta name="description" content="The songs saved on the server.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendored/web-design-wavefront/design_language.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendored/web-design-wavefront/design_language.js" defer></script>
+<script src="/main.js" defer></script>
+</head>
+<body class="page" data-page="library">
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar topbar-dynamic">
+  <button class="button button-icon show-sm-only" type="button" data-drawer-open="nav-drawer" aria-label="Open navigation">
+    <span class="icon" aria-hidden="true">menu</span>
+  </button>
+  <a class="topbar-title brand" href="/">Song-DL</a>
+  <nav class="topnav hide-sm" aria-label="Main">
+    <a class="topnav-link" href="/">Search</a>
+    <a class="topnav-link" href="/downloads/">Downloads <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/library/" aria-current="page">Library</a>
+  </nav>
+  <div class="topbar-actions">
+    <a class="button button-icon" href="/" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
+  </div>
+</header>
+
+<aside class="drawer" id="nav-drawer" data-open="false" aria-hidden="true" aria-label="Navigation">
+  <div class="drawer-header">
+    <span class="text-heading-3 grow">Song-DL</span>
+    <button class="button button-icon button-icon-sm" type="button" data-drawer-close aria-label="Close navigation">
+      <span class="icon" aria-hidden="true">close</span>
+    </button>
+  </div>
+  <nav class="drawer-body" aria-label="Main">
+    <a class="nav-item" href="/"><span class="icon" aria-hidden="true">search</span> Search</a>
+    <a class="nav-item" href="/downloads/"><span class="icon" aria-hidden="true">queue_music</span> Downloads <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/library/" aria-current="page"><span class="icon" aria-hidden="true">library_music</span> Library</a>
+  </nav>
+  <div class="drawer-footer">
+    <a class="nav-item" href="/" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
+  </div>
+</aside>
+
+<main id="main" tabindex="-1" class="page-body">
+  <section class="section">
+    <div class="container">
+      <h1 class="text-display-3">Library</h1>
+      <div class="empty-state mt-6">
+        <span class="icon" aria-hidden="true">library_music</span>
+        <p class="text-heading-3">Coming soon</p>
+        <p class="text-body-2 text-muted">The songs saved on the server will be listed here.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <!-- TODO: point at the real repository -->
+  <a class="site-footer-link" href="https://github.com/SlopHobbyist/song-dl">Github</a>
+</footer>
+
+</body>
+</html>

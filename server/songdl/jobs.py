@@ -183,6 +183,8 @@ class ScanTrack:
         return {
             'title': self.track.title,
             'artist': self.track.artist,
+            'album': self.track.album,
+            'duration': self.track.duration,
             'state': self.state,
             'results': results,
             'size': sum(r['size'] for r in results) or None,

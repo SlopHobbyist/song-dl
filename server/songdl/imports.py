@@ -143,17 +143,26 @@ class Import:
             'finished': self.finished,
         }
 
+    def _not_found(self):
+        # Not on Soulseek in any of the formats (found on SoundCloud or YouTube, maybe)
+        return [t for t in self.tracks
+                if t.state in ('found', 'missing') and not any(f in self.formats for f in t.found)]
+
     def missing_csv(self):
         out = io.StringIO()
         writer = csv.writer(out, lineterminator='\r\n')
         writer.writerow(['Track Name', 'Artist Name(s)', 'Album Name', 'Duration (ms)', 'Not found in'])
-        for t in self.tracks:
-            # Not on Soulseek in any of the formats (found on SoundCloud or YouTube, maybe)
-            if t.state in ('found', 'missing') and not any(f in self.formats for f in t.found):
-                d = t.track.duration
-                writer.writerow([t.track.title, t.track.artist, t.track.album, d * 1000 if d else '',
-                                 ' '.join(f.upper() for f in self.formats)])
-        return '﻿' + out.getvalue()
+        for t in self._not_found():
+            d = t.track.duration
+            writer.writerow([t.track.title, t.track.artist, t.track.album, d * 1000 if d else '',
+                             ' '.join(f.upper() for f in self.formats)])
+        return '\ufeff' + out.getvalue()
+
+    def missing_txt(self):
+        """The same songs as missing_csv, one "Artist - Title" a line, so the list can be
+        uploaded again as a playlist."""
+        return ''.join(f'{t.track.artist} - {t.track.title}\r\n' if t.track.artist else f'{t.track.title}\r\n'
+                       for t in self._not_found())
 
     def to_dict(self):
         return {'id': self.id, 'name': self.name, 'formats': self.formats, 'sources': self.sources,

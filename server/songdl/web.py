@@ -23,7 +23,7 @@ from . import imports, jobs, matching, playlist, spotify, turnstile, youtube
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
-from .server_queue import ServerQueue
+from .server_queue import ServerQueue, normalize_folder
 
 log = logging.getLogger('songdl')
 
@@ -40,13 +40,15 @@ CLEANUP_SECONDS = 3600
 
 # The pages by the address the browser shows, and the file in webui/ behind each
 PAGES = {'/': 'index.html', '/login/': 'login/index.html',
-         '/server/': 'server/index.html', '/all/': 'all/index.html'}
+         '/downloads/': 'downloads/index.html', '/library/': 'library/index.html'}
 # Pages only admins may open
-ADMIN_PAGES = {'/server/', '/all/'}
+ADMIN_PAGES = {'/downloads/', '/library/'}
+# Pages that moved: the Server page's tools are on the home page now, and All is Downloads
+MOVED = {'/server/': '/', '/all/': '/downloads/'}
 # Other spellings of a page's address (old .html links, no trailing slash) and where they go
 PAGE_ALIASES = {'/index.html': '/'} | {
-    alias: page for page in PAGES if page != '/'
-    for alias in (page.rstrip('/'), page.rstrip('/') + '.html', page + 'index.html')}
+    alias: target for page, target in [(p, p) for p in PAGES if p != '/'] + list(MOVED.items())
+    for alias in (page.rstrip('/'), page.rstrip('/') + '.html', page + 'index.html')} | MOVED
 # The other files the web server hands out from webui/: the site's files and the
 # kit's stylesheet, script and fonts (the kit's folder also holds docs and a .git)
 PUBLIC_FILE = re.compile(
@@ -444,9 +446,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         entries = [manager.entry(i) for i in ids]
         if any(e.source == 'soulseek' for e in entries):
             await manager.engine.check_connected()
-        queued, skipped = queue.add(entries, data.get('folder'), user)
-        log.info('%s queued %d song(s) in %r', user, queued, data.get('folder'))
-        return web.json_response({'queued': queued, 'skipped': skipped})
+        folder = queue.folder_for(data['playlist']) if 'playlist' in data else data.get('folder')
+        queued, skipped = queue.add(entries, folder, user)
+        log.info('%s queued %d song(s) in %r', user, queued, folder)
+        return web.json_response({'queued': queued, 'skipped': skipped, 'folder': normalize_folder(folder)})
 
     def queue_action(action):
         async def handler(request):
@@ -486,7 +489,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             'That playlist has {n} songs. An import can have up to {limit}; split it into smaller files.')
         name = ' '.join(str(data.get('name') or '').split())[:120]
         name = re.sub(r'\.(?:csv|txt)$', '', name, flags=re.I) or 'Playlist'
-        imp = importer.add(name, formats, data.get('folder'), user, tracks, skipped, sources)
+        folder = queue.folder_for(data['playlist']) if 'playlist' in data else data.get('folder')
+        imp = importer.add(name, formats, folder, user, tracks, skipped, sources)
         return web.json_response(imp.view())
 
     async def list_imports(request):
@@ -503,8 +507,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     async def missing_csv(request):
         require_admin(request)
         imp = importer.get(request.match_info['id'])
-        name = clean_name(imp.name + ' - not found', None, default='not found') + '.csv'
-        return web.Response(text=imp.missing_csv(), content_type='text/csv', headers={
+        kind = request.match_info['ext']
+        name = clean_name(imp.name + ' - not found', None, default='not found') + '.' + kind
+        text, mime = (imp.missing_txt(), 'text/plain') if kind == 'txt' else (imp.missing_csv(), 'text/csv')
+        return web.Response(text=text, content_type=mime, headers={
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
 
     async def health(request):
@@ -555,7 +561,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.delete('/api/queue/{id}', delete_queued),
         web.get('/api/imports', list_imports),
         web.post('/api/imports', add_import),
-        web.get('/api/imports/{id}/missing.csv', missing_csv),
+        web.get(r'/api/imports/{id}/missing.{ext:csv|txt}', missing_csv),
         web.post('/api/imports/{id}/pause', import_action(importer.pause)),
         web.post('/api/imports/{id}/resume', import_action(importer.resume)),
         web.post('/api/imports/{id}/cancel', import_action(importer.cancel)),

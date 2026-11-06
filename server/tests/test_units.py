@@ -4,7 +4,7 @@ from songdl import engine, matching, playlist
 from songdl.auth import Auth
 from songdl.config import ConfigError, _admins
 from songdl.errors import UserError
-from songdl.server_queue import normalize_folder
+from songdl.server_queue import normalize_folder, playlist_folder
 from songdl.web import parse_formats, parse_sources
 
 
@@ -127,6 +127,15 @@ def test_folders_are_normalised(raw, out):
 def test_bad_folders_are_refused(raw):
     with pytest.raises(UserError):
         normalize_folder(raw)
+
+
+@pytest.mark.parametrize('name,out', [('Road Trip', 'Road Trip'), ('AC/DC: Hits?', 'AC-DC- Hits-'),
+                                      ('  ..dots.. ', 'dots'), ('', 'Playlist'), ('...', 'Playlist'),
+                                      ('1b4e28ba-2fa1-11d2-883f-0016d3cca427', 'Playlist 1b4e28ba-2fa1-11d2-883f-0016d3cca427'),
+                                      ('x' * 300, 'x' * 120)])
+def test_a_playlist_name_becomes_one_safe_folder(name, out):
+    assert playlist_folder(name) == out
+    assert normalize_folder(out) == out
 
 
 def test_audio_headers(tmp_path):

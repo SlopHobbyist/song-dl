@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>All downloads · Song-DL</title>
-<meta name="description" content="Everything queued and downloading on the server.">
+<title>Downloads · Song-DL</title>
+<meta name="description" content="Everything being saved onto the server, and playlist imports.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2021'/%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5' fill='%2393999f'/%3E%3Crect x='12' y='8' width='3' height='16' rx='1.5' fill='%232196f3'/%3E%3Crect x='17' y='11' width='3' height='10' rx='1.5' fill='%232196f3'/%3E%3Crect x='22' y='14' width='3' height='4' rx='1.5' fill='%2393999f'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/vendored/web-design-wavefront/design_language.css">
 <link rel="stylesheet" href="/style.css">
 <script src="/vendored/web-design-wavefront/design_language.js" defer></script>
 <script src="/main.js" defer></script>
 </head>
-<body class="page" data-page="all">
+<body class="page" data-page="downloads">
 
 <a class="skip-link" href="#main">Skip to content</a>
 
@@ -22,9 +22,9 @@
   </button>
   <a class="topbar-title brand" href="/">Song-DL</a>
   <nav class="topnav hide-sm" aria-label="Main">
-    <a class="topnav-link" href="/">Browser</a>
-    <a class="topnav-link" href="/server/">Server</a>
-    <a class="topnav-link" href="/all/" aria-current="page">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/">Search</a>
+    <a class="topnav-link" href="/downloads/" aria-current="page">Downloads <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/library/">Library</a>
   </nav>
   <div class="topbar-actions">
     <a class="button button-icon" href="/" data-action="logout" aria-label="Sign out" title="Sign out"><span class="icon" aria-hidden="true">logout</span></a>
@@ -39,9 +39,9 @@
     </button>
   </div>
   <nav class="drawer-body" aria-label="Main">
-    <a class="nav-item" href="/"><span class="icon" aria-hidden="true">download</span> Browser</a>
-    <a class="nav-item" href="/server/"><span class="icon" aria-hidden="true">dns</span> Server</a>
-    <a class="nav-item" href="/all/" aria-current="page"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/"><span class="icon" aria-hidden="true">search</span> Search</a>
+    <a class="nav-item" href="/downloads/" aria-current="page"><span class="icon" aria-hidden="true">queue_music</span> Downloads <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/library/"><span class="icon" aria-hidden="true">library_music</span> Library</a>
   </nav>
   <div class="drawer-footer">
     <a class="nav-item" href="/" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
@@ -53,7 +53,7 @@
     <div class="container">
 
       <div class="row justify-between">
-        <h1 class="text-display-3">All downloads</h1>
+        <h1 class="text-display-3">Downloads</h1>
         <div class="row row-tight">
           <button class="button button-outlined" type="button" data-action="pause-all"><span class="icon" aria-hidden="true">pause</span> Pause all</button>
           <button class="button button-outlined" type="button" data-action="clear-done"><span class="icon" aria-hidden="true">clear_all</span> Clear finished</button>

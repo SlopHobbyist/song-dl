@@ -99,13 +99,21 @@
   }
 
   /* The folder admins save songs into, as the server names it (see /api/session) */
-  var serverRoot = 'downloads/';
+  var serverRoot = 'music/';
+  /* Signed in as an admin (see /api/session), which adds saving to the server */
+  var isAdmin = false;
 
-  /* The folder under serverRoot, with a trailing slash. */
-  function subfolder() {
-    var field = $('#subfolder');
-    var value = field ? field.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '';
-    return value ? value + '/' : '';
+  /* A playlist's name, from its file name ("Road Trip.csv" -> "Road Trip") */
+  function playlistName(fileName) {
+    return String(fileName || '').replace(/\.(?:csv|txt)$/i, '') || 'Playlist';
+  }
+
+  /* The folder a playlist's songs go in on the server, as the server makes it
+     (server_queue.playlist_folder): shown before anything is saved. */
+  function playlistFolder(name) {
+    var folder = String(name || '').replace(/[\\\/:*?"<>|\x00-\x1f]+/g, '-')
+      .replace(/\s+/g, ' ').replace(/^[ .]+|[ .]+$/g, '').slice(0, 120).replace(/[ .]+$/, '');
+    return folder || 'Playlist';
   }
 
   /* A button that is busy keeps keyboard focus (aria-disabled, not disabled)
@@ -146,7 +154,7 @@
     try { data = await res.json(); } catch (e) {}
     if (!res.ok) {
       /* The session ended (or never began): the admin pages need a sign-in. */
-      if (res.status === 401 && (page === 'server' || page === 'all')) {
+      if (res.status === 401 && (page === 'downloads' || page === 'library')) {
         window.location.href = '/login/';
       }
       var error = new Error(data.error || 'Something went wrong. Please try again.');
@@ -196,38 +204,34 @@
     });
 
     var admin = $('#admin-link');
-    var affixes = $$('[data-server-root]');
-    var queuePage = $('#queue-rows');
-    if (admin || affixes.length || queuePage) {
-      api('GET', '/api/session').then(function (session) {
-        if (session.serverFolder) {
-          serverRoot = session.serverFolder + '/';
-          affixes.forEach(function (el) { setText(el, serverRoot); });
-          var folder = $('#subfolder');
-          if (folder) folder.dispatchEvent(new Event('input'));
+    if (page === 'login') return;
+    api('GET', '/api/session').then(function (session) {
+      if (session.serverFolder) serverRoot = session.serverFolder + '/';
+      /* Signed in? The home page gets the admin navigation in place of the sign-in
+         button, and Download as can save to the server. Every admin page shows the
+         count of active downloads (the Downloads page keeps its own). */
+      if (!session.user) return;
+      function signedIn(yes) {
+        isAdmin = yes;
+        if (admin) admin.hidden = yes;
+        $$('[data-signed-in]').forEach(function (el) { el.hidden = !yes; });
+        if (applyDelivery) applyDelivery();
+      }
+      signedIn(true);
+      if (page === 'downloads') return;
+      var signedOut = false;
+      poll(async function () {
+        if (signedOut) return;
+        try {
+          setActiveCount((await api('GET', '/api/queue?summary=1')).active);
+        } catch (e) {
+          if (e.status !== 401) throw e;
+          /* The session ended while the page was open */
+          signedOut = true;
+          signedIn(false);
         }
-        /* Signed in? The home page gets the admin pages' navigation in place of
-           the sign-in button, with the All page's count of active downloads. */
-        if (!admin || !session.user) return;
-        function signedIn(yes) {
-          admin.hidden = yes;
-          $$('[data-signed-in]').forEach(function (el) { el.hidden = !yes; });
-        }
-        signedIn(true);
-        var signedOut = false;
-        poll(async function () {
-          if (signedOut) return;
-          try {
-            setActiveCount((await api('GET', '/api/queue?summary=1')).active);
-          } catch (e) {
-            if (e.status !== 401) throw e;
-            /* The session ended while the page was open */
-            signedOut = true;
-            signedIn(false);
-          }
-        }, 5000);
-      }, function () {});
-    }
+      }, 5000);
+    }, function () {});
   }
 
   function setActiveCount(count) {
@@ -321,6 +325,68 @@
     o.apply();
   }
 
+  /* How Download all saves a playlist: 'zip' (one file), 'files' (one per song), or
+     'server' (admins: each song saved on the server, in a folder named after the playlist) */
+  var DELIVERY_ICONS = { zip: 'folder_zip', files: 'file_copy', server: 'dns' };
+  var DELIVERY_NAMES = { zip: 'Zip file', files: 'Separate files', server: 'Separate files to Server' };
+  var applyDelivery = null;    // set by initDelivery: shows the choice again (signing in or out changes it)
+  var deliveryHooks = [];      // called when the choice changes
+
+  function deliveryMode() {
+    var picked = $('input[name="delivery"]:checked');
+    var mode = picked ? picked.value : 'zip';
+    return mode === 'server' && !isAdmin ? 'zip' : mode;
+  }
+
+  function serverMode() { return deliveryMode() === 'server'; }
+
+  /* The playlist the page holds, by name: the one being scanned, else the one chosen */
+  var currentPlaylist = function () {
+    var file = chosenPlaylist();
+    return linked ? linked.name : file ? playlistName(file.name) : '';
+  };
+
+  function initDelivery() {
+    var radios = $$('input[name="delivery"]');
+    if (!radios.length) return;
+    var saved = null;
+    try { saved = localStorage.getItem('songdl-delivery'); } catch (e) {}
+    radios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        saved = radio.value;
+        try { localStorage.setItem('songdl-delivery', saved); } catch (e) {}
+        apply();
+      });
+    });
+    /* The server choice is only there for admins; a visitor with it saved gets the zip */
+    function apply() {
+      var option = $('[data-server-option]');
+      if (option) {
+        option.hidden = !isAdmin;
+        $('input', option).disabled = !isAdmin;
+      }
+      var want = DELIVERY_NAMES[saved] && (saved !== 'server' || isAdmin) ? saved : 'zip';
+      radios.forEach(function (radio) { radio.checked = radio.value === want; });
+      var mode = deliveryMode();
+      labelButtons('[data-delivery-button]', 'Download as', DELIVERY_NAMES[mode]);
+      $$('[data-delivery-button] .icon').forEach(function (icon) { setText(icon, DELIVERY_ICONS[mode]); });
+      var note = $('[data-delivery-note]');
+      if (note) note.hidden = mode !== 'files';
+      var serverNote = $('[data-server-note]');
+      if (serverNote) {
+        serverNote.hidden = mode !== 'server';
+        setText($('[data-server-dest]', serverNote), serverRoot + playlistFolder(currentPlaylist() || 'playlist name') + '/');
+      }
+      $$('[data-server-only]').forEach(function (el) { el.hidden = mode !== 'server'; });
+      deliveryHooks.forEach(function (hook) { hook(mode); });
+    }
+    applyDelivery = apply;
+    /* The folder named in the note follows the playlist */
+    var trigger = $('[data-delivery-button]');
+    if (trigger) trigger.addEventListener('click', apply);
+    apply();
+  }
+
   /* The tooltip is just the name; screen readers also hear what's chosen. */
   function labelButtons(selector, label, detail) {
     $$(selector).forEach(function (button) {
@@ -405,7 +471,7 @@
       announce(title.textContent);
     }
     hideResults();
-    focus = focus || (name === 'playlist' ? $('#import-button') || $('#scan-button') : $('#q'));
+    focus = focus || (name === 'playlist' ? $('#scan-button') : $('#q'));
     if (focus) focus.focus();
   }
 
@@ -520,14 +586,14 @@
     }
 
     function showLinked() {
-      var limit = page === 'server' ? linked.maxImport : linked.maxScan;
+      var limit = serverMode() ? linked.maxImport : linked.maxScan;
       var tooBig = linked.total > limit;
       list.innerHTML =
         '<div class="search search-hero playlist-bar">' +
           '<span class="icon" aria-hidden="true">queue_music</span>' +
           '<span class="grow text-truncate" title="' + escapeHtml(linked.name) + '">' + escapeHtml(linked.name) + '</span>' +
           '<span class="text-caption ' + (tooBig ? 'text-warning' : 'text-muted') + '"' +
-            (tooBig ? ' title="' + (page === 'server' ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
+            (tooBig ? ' title="' + (serverMode() ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
             count(linked.total) + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
           (linked.unavailable
             ? '<span class="text-caption text-muted" title="Deleted or private videos. They stay in the CSV, but there is nothing to search for.">' +
@@ -564,9 +630,9 @@
         showLinked();
         setIdle(scanButton);
         if (importButton) importButton.removeAttribute('aria-disabled');
-        announce(res.name + ': ' + res.total + ' songs. Ready to ' + (importButton ? 'import or scan' : 'scan') +
+        announce(res.name + ': ' + res.total + ' songs. Ready to ' + (serverMode() ? 'import or scan' : 'scan') +
           ', or download the CSV.');
-        if (!scanButton.closest('[data-panel]').hidden) (importButton || scanButton).focus();
+        if (!scanButton.closest('[data-panel]').hidden) scanButton.focus();
       } catch (e) {
         if (run !== linkRun) return;
         list.innerHTML = '';
@@ -848,14 +914,13 @@
     return true;
   }
 
-  /* Queues results on the server (Server page). */
-  async function queueResults(ids, label) {
-    var folderField = $('#subfolder');
-    var res = await api('POST', '/api/queue', { folder: folderField ? folderField.value : '', results: ids });
+  /* Saves results on the server (admins), in a folder named after the playlist. */
+  async function queueResults(ids, label, playlist) {
+    var res = await api('POST', '/api/queue', { playlist: playlist, results: ids });
     if (res.queued) {
-      toast('Queued ' + label, 'success');
+      toast('Saving ' + label + ' to ' + serverRoot + res.folder + '/. Follow along on Downloads.', 'success');
     } else {
-      toast('Already in the queue', 'warning');
+      toast('Already being saved to ' + serverRoot + res.folder + '/', 'warning');
     }
     return res;
   }
@@ -889,7 +954,6 @@
       bind('quality', found.length === 1 ? found[0].quality : found.map(function (r) { return r.format + ' ' + r.quality; }).join(' · '));
       bind('size', formatSize(sumSizes(found)));
       bind('filename', found.map(function (r) { return r.filename; }).join(', '));
-      bind('dest', serverRoot + subfolder());
       var source = found[0].source;
       var where = SOURCE_NAMES[source] || 'Soulseek';
       var elsewhere = source !== 'soulseek';
@@ -1005,11 +1069,6 @@
       }
     });
 
-    var folder = $('#subfolder');
-    if (folder) {
-      folder.addEventListener('input', function () { bind('dest', serverRoot + subfolder()); });
-    }
-
     result.addEventListener('click', async function (event) {
       var button = event.target.closest('[data-action]');
       if (!button || isBusy(button) || !current) return;
@@ -1031,15 +1090,6 @@
         } finally {
           setIdle(button);
           hideFetch(meter);
-        }
-      } else if (action === 'queue-one') {
-        setBusy(button, 'Queueing');
-        try {
-          await queueResults(ids, '"' + title + '"');
-        } catch (e) {
-          toast(e.message, 'danger');
-        } finally {
-          setIdle(button);
         }
       }
     });
@@ -1078,14 +1128,39 @@
     var results = $('#scan-results');
     var rows = $('#scan-rows');
     var allButton = $('[data-action="download-all"], [data-action="queue-all"]', results);
-    var server = page === 'server';
+    var missingMenu = $('[data-missing-menu]', results);
     var scan = null;   // { id, job, formats }
 
+    /* The playlist on screen names the server folder once it's scanned */
+    var chosenName = currentPlaylist;
+    currentPlaylist = function () { return scan && scan.job ? playlistName(scan.job.name) : chosenName(); };
+
+    /* A row's button: download it, or save it on the server */
+    function rowAction(button, title) {
+      var server = serverMode();
+      button.setAttribute('data-action', server ? 'queue-row' : 'download-row');
+      var label = (server ? 'Save to server: ' : 'Download ') + title;
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      button.innerHTML = '<span class="icon icon-sm" aria-hidden="true">' + (server ? 'playlist_add' : 'download') + '</span>';
+    }
+
+    /* Download as changed: rows not yet done, and Download all, follow it */
+    deliveryHooks.push(function () {
+      if (!scan || !scan.job) return;
+      $$('[data-action="download-row"], [data-action="queue-row"]', rows).forEach(function (button) {
+        if (isBusy(button) || button.hasAttribute('data-redo')) return;
+        rowAction(button, scan.job.tracks[+button.closest('tr').getAttribute('data-index')].title);
+      });
+      if (!isBusy(allButton)) updateSummary(scan.job);
+    });
+
     function buildRows(job) {
+      var server = serverMode();
       rows.innerHTML = job.tracks.map(function (song, i) {
         var action = server ? 'queue-row' : 'download-row';
         var icon = server ? 'playlist_add' : 'download';
-        var label = (server ? 'Queue ' : 'Download ') + song.title;
+        var label = (server ? 'Save to server: ' : 'Download ') + song.title;
         return '<tr data-index="' + i + '" data-state="">' +
           '<td class="table-numeric col-index">' + (i + 1) + '</td>' +
           '<td><div class="song-cell"><span class="text-medium">' + escapeHtml(song.title) + '</span>' +
@@ -1125,13 +1200,16 @@
         missing + ' not found'];
       if (job.state === 'running') parts.push(left + ' left to scan');
       if (job.skipped) parts.push(job.skipped + ' row' + (job.skipped === 1 ? '' : 's') + ' without a song name skipped');
-      if (server) parts.push('<span class="text-mono">' + escapeHtml(serverRoot + subfolder()) + '</span>');
+      var server = serverMode();
+      if (server) parts.push('<span class="text-mono">' + escapeHtml(serverRoot + playlistFolder(playlistName(job.name))) + '/</span>');
       $('[data-scan-summary]', results).innerHTML = parts.join(' · ');
       setText($('[data-scan-name]', results), job.name);
+      missingMenu.hidden = !missing;
 
       if (!isBusy(allButton) || !allButton.hasAttribute('data-idle')) {
-        var verb = server ? 'Queue all' : 'Download all';
-        var icon = server ? 'playlist_add' : 'download';
+        allButton.setAttribute('data-action', server ? 'queue-all' : 'download-all');
+        var verb = server ? 'Save all to server' : 'Download all';
+        var icon = server ? 'dns' : 'download';
         allButton.innerHTML = '<span class="icon" aria-hidden="true">' + icon + '</span> ' + verb + ' (' + found + ')';
         var ready = job.state !== 'running' && found > 0;
         if (ready) allButton.removeAttribute('aria-disabled'); else allButton.setAttribute('aria-disabled', 'true');
@@ -1154,7 +1232,7 @@
       }
       if (file.size > 500 * 1024 || (linked && linked.total > linked.maxScan)) {
         var what = linked ? 'That playlist has ' + linked.total + ' songs.' : 'That file is too big.';
-        toast(what + (page === 'server'
+        toast(what + (serverMode()
           ? ' A scan can have up to 300 songs. Use Import instead: it takes any size.'
           : ' A scan can have up to 300 songs. Download the CSV and split it into smaller files.'), 'warning');
         return;
@@ -1203,6 +1281,34 @@
           setIdle(button);
         }
       }
+    });
+
+    /* The songs the scan didn't find, as a list to look for elsewhere: a text file of
+       "Artist - Title" lines, or a CSV like Spotify exports. Either can be uploaded again. */
+    function missingFile(kind) {
+      var songs = scan.job.tracks.filter(function (t) { return t.state === 'missing'; });
+      var name = playlistName(scan.job.name) + ' - not found.' + kind;
+      var text;
+      if (kind === 'txt') {
+        text = songs.map(function (t) { return (t.artist ? t.artist + ' - ' : '') + t.title; }).join('\r\n') + '\r\n';
+        return new File([text], name, { type: 'text/plain' });
+      }
+      function cell(value) {
+        value = value === null || value === undefined ? '' : String(value);
+        return /[",\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+      }
+      text = '\ufeffTrack Name,Artist Name(s),Album Name,Duration (ms)\r\n' + songs.map(function (t) {
+        return [t.title, t.artist, t.album, t.duration ? t.duration * 1000 : ''].map(cell).join(',');
+      }).join('\r\n') + '\r\n';
+      return new File([text], name, { type: 'text/csv' });
+    }
+
+    results.addEventListener('click', function (event) {
+      var item = event.target.closest('[data-missing]');
+      if (!item || !scan || !scan.job) return;
+      var file = missingFile(item.getAttribute('data-missing'));
+      saveBlob(file);
+      announce('Downloading ' + file.name);
     });
 
     function resultIds(tracks) {
@@ -1318,13 +1424,13 @@
           } finally {
             batch.finish(jobs);
           }
-          var zipName = scan.job.name.replace(/\.(?:csv|txt)$/i, '');
+          var zipName = deliveryMode() === 'zip' ? playlistName(scan.job.name) : null;
           await deliver(jobs, found.length + ' songs', zipName);
         } else if (action === 'queue-all') {
           if (scan.job.state === 'running' || !found.length) return;
-          setBusy(target, 'Queueing');
-          var res = await queueResults(resultIds(found), found.length + ' songs');
-          announce('Queued ' + res.queued + ' downloads');
+          setBusy(target, 'Saving');
+          var res = await queueResults(resultIds(found), found.length + ' songs', playlistName(scan.job.name));
+          announce('Saving ' + res.queued + ' songs to the server');
         } else {
           var song = scan.job.tracks[+target.closest('tr').getAttribute('data-index')];
           var ids = song.results.map(function (r) { return r.id; });
@@ -1348,7 +1454,7 @@
               target.title = target.getAttribute('aria-label');
             }
           } else {
-            ok = (await queueResults(ids, label)).queued > 0;
+            ok = (await queueResults(ids, label, playlistName(scan.job.name))).queued > 0;
           }
           if (ok && action === 'download-row') {
             /* The browser may still have dropped the file (cancelled, failed),
@@ -1364,8 +1470,8 @@
           }
           if (ok) {
             /* Stay focusable (aria-disabled) so focus is not dropped. */
-            target.setAttribute('aria-label', 'Queued ' + song.title);
-            target.setAttribute('title', 'Queued ' + song.title);
+            target.setAttribute('aria-label', 'Saving ' + song.title + ' to the server');
+            target.setAttribute('title', 'Saving to the server');
             target.innerHTML = '<span class="icon icon-sm text-success" aria-hidden="true">check</span>';
             target.removeAttribute('data-idle');
             return;
@@ -1393,9 +1499,10 @@
   }
 
   /* --------------------------------------------------- Playlist imports
-     Server page: Import hands the whole playlist to the server, which searches
-     it in the background and queues each song as it is found. The Server and
-     All pages list the imports and their progress. */
+     Home page, saving to the server: Import hands the whole playlist to the
+     server, which searches it in the background and saves each song as it is
+     found, in a folder named after the playlist. The Downloads page lists the
+     imports and their progress. */
 
   function formatEta(seconds) {
     if (seconds === null || seconds === undefined) return '';
@@ -1455,9 +1562,9 @@
           name: linked ? linked.name : file.name,
           formats: formats,
           sources: chosenSources(),
-          folder: $('#subfolder') ? $('#subfolder').value : ''
+          playlist: linked ? linked.name : playlistName(file.name)
         });
-        toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder, 'success');
+        toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder + '. Follow along on Downloads.', 'success');
         if (refreshImports) await refreshImports();
         var section = $('#imports-section');
         if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1477,9 +1584,16 @@
     if (imp.state === 'cancelled') html += actionButton('resume', 'refresh', 'Restart', name);
     if (imp.state === 'running' || imp.state === 'paused') html += actionButton('cancel', 'block', 'Cancel', name);
     if (imp.missing || imp.elsewhere) {
-      var label = 'Download the songs of ' + escapeHtml(name) + ' that weren\'t found, as a CSV';
-      html += '<a class="button button-icon button-icon-sm" href="/api/imports/' + encodeURIComponent(imp.id) +
-        '/missing.csv" download aria-label="' + label + '" title="' + label + '"><span class="icon icon-sm">playlist_remove</span></a>';
+      var label = 'Save a list of the songs of ' + escapeHtml(name) + ' that weren\'t found';
+      var menu = 'missing-' + escapeHtml(imp.id);
+      var base = '/api/imports/' + encodeURIComponent(imp.id) + '/missing.';
+      html += '<div class="menu-anchor">' +
+        '<button class="button button-icon button-icon-sm" type="button" data-menu="' + menu + '" aria-label="' + label + '" title="' + label + '">' +
+          '<span class="icon icon-sm">playlist_remove</span></button>' +
+        '<div class="menu menu-end" id="' + menu + '" role="menu" data-open="false">' +
+          '<a class="menu-item" role="menuitem" href="' + base + 'txt" download><span class="icon icon-sm">description</span> Text file (.txt)</a>' +
+          '<a class="menu-item" role="menuitem" href="' + base + 'csv" download><span class="icon icon-sm">table_view</span> Spreadsheet (.csv)</a>' +
+        '</div></div>';
     }
     if (imp.state === 'done' || imp.state === 'cancelled') {
       html += actionButton('delete', 'delete', 'Remove', name);
@@ -1569,6 +1683,8 @@
         if (list.children[index] !== el) list.insertBefore(el, list.children[index] || null);
       });
       Object.keys(existing).forEach(function (id) { existing[id].remove(); });
+      /* Wires up new not-found menus; the kit finds a menu by id, so only once it's in the page */
+      if (window.UI && UI.init) UI.init(list);
       section.hidden = !data.imports.length;
     }
     refreshImports = load;
@@ -1598,8 +1714,7 @@
   }
 
   /* -------------------------------------------------------- Queue rows
-     One row renderer for both the server page's "Your queue" and the All
-     page. The tbody's data-columns says which cells it has. Status is its
+     The Downloads page's rows. The tbody's data-columns says which cells it has. Status is its
      own column; progress sits in the next one, the bar with its percentage
      beside it. Rows are kept between refreshes and only touched when
      something about them changed, so focus stays where it is. */
@@ -1742,25 +1857,7 @@
     });
   }
 
-  /* ------------------------------------------------ Server: your queue */
-
-  function initMyQueue() {
-    if (page !== 'server') return;
-    var tbody = $('#queue-rows');
-    var columns = tbody.getAttribute('data-columns').split(' ');
-    poll(async function () {
-      var data = await api('GET', '/api/queue?mine=1');
-      setActiveCount(data.active);
-      syncRows(tbody, data.items, columns);
-      var more = $('#queue-more');
-      if (more) {
-        more.hidden = !data.more;
-        setText(more, data.more ? 'And ' + count(data.more) + ' more. The All page lists everything.' : '');
-      }
-    }, 1500);
-  }
-
-  /* --------------------------------------------------------- All page */
+  /* ---------------------------------------------------- Downloads page */
 
   var STOPPED = ['paused', 'cancelled', 'failed'];
   var FILTERS = {
@@ -1771,7 +1868,7 @@
   };
 
   function initAll() {
-    if (page !== 'all') return;
+    if (page !== 'downloads') return;
     var tbody = $('#queue-rows');
     var columns = tbody.getAttribute('data-columns').split(' ');
     var filter = 'all';
@@ -1908,7 +2005,7 @@
 
     api('GET', '/api/session').then(function (session) {
       if (session.user) {
-        window.location.href = '/server/';
+        window.location.href = '/';
         return;
       }
       if (!session.adminEnabled) {
@@ -1951,7 +2048,7 @@
           remember: $('#login-remember').checked,
           turnstile: token ? token.value : null
         });
-        window.location.href = '/server/';
+        window.location.href = '/';
       } catch (e) {
         showError(e.message);
         $('#login-pass').value = '';
@@ -1965,22 +2062,12 @@
   initChrome();
   initFormats();
   initSources();
+  initDelivery();
   var handOffLink = initPlaylistLink();
   initSearch();
   initScan();
   initImportButton();
   initImports();
-  initMyQueue();
   initAll();
   initLogin();
-
-  /* Remember the server folder between visits */
-  var folderField = $('#subfolder');
-  if (folderField) {
-    try { folderField.value = localStorage.getItem('songdl-folder') || ''; } catch (e) {}
-    folderField.dispatchEvent(new Event('input'));
-    folderField.addEventListener('input', function () {
-      try { localStorage.setItem('songdl-folder', folderField.value); } catch (e) {}
-    });
-  }
 })();

@@ -23,9 +23,9 @@
   </button>
   <a class="topbar-title brand" href="/">Song-DL</a>
   <nav class="topnav hide-sm" aria-label="Main" data-signed-in hidden>
-    <a class="topnav-link" href="/" aria-current="page">Browser</a>
-    <a class="topnav-link" href="/server/">Server</a>
-    <a class="topnav-link" href="/all/">All <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/" aria-current="page">Search</a>
+    <a class="topnav-link" href="/downloads/">Downloads <span class="badge-count">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="topnav-link" href="/library/">Library</a>
   </nav>
   <div class="topbar-actions">
     <a class="button button-outlined button-sm" id="admin-link" href="/login/" aria-label="Admin sign in" title="Admin sign in"><span class="icon icon-sm" aria-hidden="true">admin_panel_settings</span></a>
@@ -41,9 +41,9 @@
     </button>
   </div>
   <nav class="drawer-body" aria-label="Main">
-    <a class="nav-item" href="/" aria-current="page"><span class="icon" aria-hidden="true">download</span> Browser</a>
-    <a class="nav-item" href="/server/"><span class="icon" aria-hidden="true">dns</span> Server</a>
-    <a class="nav-item" href="/all/"><span class="icon" aria-hidden="true">queue_music</span> All <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/" aria-current="page"><span class="icon" aria-hidden="true">search</span> Search</a>
+    <a class="nav-item" href="/downloads/"><span class="icon" aria-hidden="true">queue_music</span> Downloads <span class="nav-item-trailing">0</span><span class="visually-hidden"> active downloads</span></a>
+    <a class="nav-item" href="/library/"><span class="icon" aria-hidden="true">library_music</span> Library</a>
   </nav>
   <div class="drawer-footer">
     <a class="nav-item" href="/" data-action="logout"><span class="icon" aria-hidden="true">logout</span> Sign out</a>
@@ -80,6 +80,8 @@
         <div class="row row-tight">
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-formats" data-formats-button aria-haspopup="dialog" aria-label="Formats" title="Formats"><span class="icon" aria-hidden="true">high_quality</span></button>
           <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-sources" data-sources-button aria-haspopup="dialog" aria-label="Sources" title="Sources"><span class="icon" aria-hidden="true">travel_explore</span></button>
+          <button class="button button-outlined button-lg" type="button" data-dialog-open="dlg-delivery" data-delivery-button aria-haspopup="dialog" aria-label="Download as" title="Download as"><span class="icon" aria-hidden="true">folder_zip</span></button>
+          <button class="button button-outlined button-lg" type="button" id="import-button" aria-label="Import" title="Import: save every song to the server in the background as it's found (any size, and the page can be closed)" data-server-only hidden><span class="icon" aria-hidden="true">playlist_add</span><span class="import-label"> Import</span></button>
           <button class="button button-filled button-lg" type="button" id="scan-button"><span class="icon" aria-hidden="true">fact_check</span> Upload and scan</button>
         </div>
       </div>
@@ -148,6 +150,13 @@
                   <span class="text-caption text-muted progress-value" aria-hidden="true"></span>
                 </div>
                 <p class="text-caption text-muted fetch-note" data-fetch-note></p>
+              </div>
+            </div>
+            <div class="menu-anchor" data-missing-menu hidden>
+              <button class="button button-outlined" type="button" data-menu="missing-menu" title="Save a list of the songs that weren't found, to look for elsewhere"><span class="icon" aria-hidden="true">playlist_remove</span> Not found</button>
+              <div class="menu menu-end" id="missing-menu" role="menu" data-open="false">
+                <button class="menu-item" type="button" role="menuitem" data-missing="txt"><span class="icon icon-sm" aria-hidden="true">description</span> Text file (.txt)</button>
+                <button class="menu-item" type="button" role="menuitem" data-missing="csv"><span class="icon icon-sm" aria-hidden="true">table_view</span> Spreadsheet (.csv)</button>
               </div>
             </div>
             <button class="button button-filled" type="button" data-action="download-all"><span class="icon" aria-hidden="true">download</span> Download all (9)</button>
@@ -234,6 +243,50 @@
       </ul>
       <p class="visually-hidden" data-reorder-status role="status" aria-live="polite"></p>
     </fieldset>
+  </div>
+  <div class="dialog-actions">
+    <button class="button button-filled" type="button" data-dialog-close="done">Done</button>
+  </div>
+</dialog>
+
+<dialog class="dialog dialog-sm" id="dlg-delivery" aria-labelledby="dlg-delivery-title">
+  <div class="dialog-header">
+    <span class="icon" aria-hidden="true">folder_zip</span>
+    <h2 class="dialog-title" id="dlg-delivery-title">Download as</h2>
+  </div>
+  <div class="dialog-body">
+    <fieldset class="fieldset fieldset-bare">
+      <legend class="visually-hidden">How Download all saves a playlist's songs</legend>
+      <div class="choice-group">
+        <label class="choice choice-radio">
+          <input type="radio" name="delivery" value="zip" checked>
+          <span class="choice-box"></span>
+          <span class="choice-label">Zip file</span>
+        </label>
+        <label class="choice choice-radio">
+          <input type="radio" name="delivery" value="files">
+          <span class="choice-box"></span>
+          <span class="choice-label">Separate files</span>
+        </label>
+        <label class="choice choice-radio" data-server-option hidden>
+          <input type="radio" name="delivery" value="server" disabled>
+          <span class="choice-box"></span>
+          <span class="choice-label">Separate files to Server</span>
+        </label>
+      </div>
+    </fieldset>
+    <aside class="alert alert-info mt-4" data-delivery-note hidden>
+      <span class="icon" aria-hidden="true">info</span>
+      <div class="alert-body">
+        <strong class="alert-title">Your browser may ask first</strong>
+        <ul class="delivery-tips">
+          <li><strong>Chrome, Edge, Brave:</strong> click <em>Allow</em> when it says the site wants to download multiple files. Missed it? Turn on <em>Automatic downloads</em> in the site's settings (the icon left of the address).</li>
+          <li><strong>Firefox:</strong> if a save window opens for every song, turn off <em>Always ask you where to save files</em> in Settings &rsaquo; General.</li>
+          <li><strong>Safari:</strong> click <em>Allow</em> when it asks about downloads on this site.</li>
+        </ul>
+      </div>
+    </aside>
+    <p class="text-caption text-muted mt-4" data-server-note hidden>Saved on the server in <span class="text-mono" data-server-dest>music/playlist name/</span>, with nothing downloaded to this device. Import, beside Upload and scan, takes playlists of any size in the background. Follow along on <a href="/downloads/">Downloads</a>.</p>
   </div>
   <div class="dialog-actions">
     <button class="button button-filled" type="button" data-dialog-close="done">Done</button>

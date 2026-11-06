@@ -188,3 +188,19 @@ async def test_an_import_takes_copies_already_here(admin, fake, tmp_path):
 def test_accents_dont_matter(lib):
     song(lib, 'a/Macarena.wav', 'Macarena', 'Los Del Río', fmt='wav')
     assert found(lib, 'los del rio macarena', ['wav']) == ['Macarena.wav']
+
+
+async def test_downloads_inside_the_server_folder_are_read_once(tmp_path):
+    # music/ is the server folder and music/downloads the downloads folder, which the app
+    # also sees at a path of its own (here a symlink stands in for the second mount)
+    music = tmp_path / 'music'
+    (music / 'downloads' / STAGED).mkdir(parents=True)
+    (music / 'Road Trip').mkdir()
+    (music / 'downloads' / STAGED / 'Daft Punk - Digital Love.flac').write_bytes(b'fLaC' + bytes(250_000))
+    (music / 'Road Trip' / 'Kavinsky - Nightcall.flac').write_bytes(b'fLaC' + bytes(250_000))
+    (tmp_path / 'downloads').symlink_to(music / 'downloads')
+    cfg = SimpleNamespace(downloads_dir=tmp_path / 'downloads', server_folder=music, data_dir=tmp_path / 'data')
+    lib = Library(cfg)
+    await lib.refresh()
+    assert sorted(lib.songs) == sorted(map(str, [tmp_path / 'downloads' / STAGED / 'Daft Punk - Digital Love.flac',
+                                                 music / 'Road Trip' / 'Kavinsky - Nightcall.flac']))

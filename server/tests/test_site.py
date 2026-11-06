@@ -173,9 +173,9 @@ async def test_scan_rejects_a_bad_csv(site):
 
 
 async def test_admin_pages_and_queue_need_a_login(site):
-    res = await site.get('/server/', allow_redirects=False)
+    res = await site.get('/downloads/', allow_redirects=False)
     assert res.status == 302 and res.headers['Location'] == '/login/'
-    assert (await site.get('/all/', allow_redirects=False)).status == 302
+    assert (await site.get('/library/', allow_redirects=False)).status == 302
     for method, path in (('get', '/api/queue'), ('post', '/api/queue'), ('post', '/api/queue/x/pause'),
                          ('delete', '/api/queue/x'), ('post', '/api/queue/clear-done')):
         assert (await getattr(site, method)(path)).status == 401
@@ -185,7 +185,10 @@ async def test_admin_pages_and_queue_need_a_login(site):
 
 async def test_pages_live_at_folder_addresses(site):
     for path, target in (('/index.html', '/'), ('/login', '/login/'), ('/login.html', '/login/'),
-                         ('/login/index.html', '/login/'), ('/all.html', '/all/'), ('/server?x=1', '/server/?x=1')):
+                         ('/login/index.html', '/login/'), ('/downloads.html', '/downloads/'),
+                         ('/library?x=1', '/library/?x=1'),
+                         # The old Server and All pages
+                         ('/server/', '/'), ('/server', '/'), ('/all/', '/downloads/'), ('/all.html', '/downloads/')):
         res = await site.get(path, allow_redirects=False)
         assert res.status == 301 and res.headers['Location'] == target, path
     assert (await site.get('/login/index.htm')).status == 404
@@ -213,7 +216,8 @@ async def test_login(site):
     cookie = res.headers['Set-Cookie']
     assert 'HttpOnly' in cookie and 'SameSite=Strict' in cookie and 'Max-Age' not in cookie   # not remembered
     assert (await (await site.get('/api/session')).json())['user'] == 'admin'
-    assert (await site.get('/server/', allow_redirects=False)).status == 200
+    assert (await site.get('/downloads/', allow_redirects=False)).status == 200
+    assert (await site.get('/library/', allow_redirects=False)).status == 200
 
     await site.post('/api/logout')
     assert (await (await site.get('/api/session')).json())['user'] is None
@@ -227,7 +231,7 @@ async def test_login_is_off_without_admins(tmp_path, fake):
     try:
         res = await client.post('/api/login', json={'username': 'admin', 'password': 'whatever-it-is'})
         assert res.status == 403
-        assert (await client.get('/server/', allow_redirects=False)).status == 302
+        assert (await client.get('/downloads/', allow_redirects=False)).status == 302
     finally:
         await client.close()
 
@@ -242,11 +246,11 @@ async def test_repeated_wrong_passwords_lock_the_ip_out(site):
 async def test_queue_saves_songs_into_a_folder(admin, tmp_path):
     results = await found_in(admin, 'daft punk digital love', ['wav', 'flac'])
     res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in results]})
-    assert await res.json() == {'queued': 2, 'skipped': 0}
+    assert await res.json() == {'queued': 2, 'skipped': 0, 'folder': 'road trip/2026'}
 
     # Queueing the same songs again while they are in the queue does nothing
     res = await admin.post('/api/queue', json={'folder': 'road trip/2026', 'results': [r['id'] for r in results]})
-    assert await res.json() == {'queued': 0, 'skipped': 2}
+    assert await res.json() == {'queued': 0, 'skipped': 2, 'folder': 'road trip/2026'}
 
     view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] == 'done' for i in v['items']))
     assert view['me'] == 'admin' and view['active'] == 0
@@ -363,5 +367,23 @@ async def test_queue_saves_into_a_separate_server_folder(tmp_path, fake):
         assert [p.name for p in (tmp_path / 'music' / 'mix').iterdir()] == ['Daft Punk - Digital Love.flac']
         # Only the staging copy was in the downloads folder, and it's gone
         assert list((tmp_path / 'downloads').iterdir()) == []
+    finally:
+        await client.close()
+
+
+async def test_a_playlist_is_saved_in_a_folder_named_after_it(tmp_path, fake):
+    # The downloads folder inside the server folder, like music/downloads on a real server
+    client = await start_site(tmp_path, fake, server_dir=tmp_path)
+    try:
+        await client.post('/api/login', json={'username': 'admin', 'password': ADMIN['admin']})
+        job = await search(client, 'daft punk digital love', ['flac'])
+        res = await client.post('/api/queue', json={'playlist': 'AC/DC: Hits?', 'results': [job['results'][0]['id']]})
+        assert (await res.json())['folder'] == 'AC-DC- Hits-'
+        view = await wait_for(lambda: queue_view(client), lambda v: v['items'] and v['items'][0]['status'] in ('done', 'failed'))
+        assert view['items'][0]['status'] == 'done', view['items'][0]['note']
+        assert [p.name for p in (tmp_path / 'AC-DC- Hits-').iterdir()] == ['Daft Punk - Digital Love.flac']
+        # A playlist called "downloads" stays out of the visitors' downloads
+        res = await client.post('/api/queue', json={'playlist': 'downloads', 'results': [job['results'][0]['id']]})
+        assert (await res.json())['folder'] == 'downloads (2)'
     finally:
         await client.close()

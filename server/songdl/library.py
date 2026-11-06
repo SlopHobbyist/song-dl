@@ -260,9 +260,26 @@ def _walk(roots, known):
             inodes[(st.st_dev, st.st_ino)] = path
         except OSError:
             pass
+    # The downloads folder may sit inside the server folder (music/downloads), mounted at a
+    # path of its own too: it's walked once, as its own root
+    root_ids = {}
+    for root in roots:
+        try:
+            st = os.stat(root)
+            root_ids[(st.st_dev, st.st_ino)] = root
+        except OSError:
+            pass
+
+    def other_root(folder, name):
+        try:
+            st = os.stat(os.path.join(folder, name))
+        except OSError:
+            return False
+        return (st.st_dev, st.st_ino) in root_ids
+
     for root in roots:
         for folder, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            dirs[:] = [d for d in dirs if not d.startswith('.') and not other_root(folder, d)]
             for name in files:
                 fmt = AUDIO.get(os.path.splitext(name)[1].lower())
                 if not fmt or name.startswith('.'):

@@ -12,7 +12,8 @@ soulseek:
     account description
 downloads:
   downloads_folder: ./downloads # with Docker, set by the volume in docker-compose.yaml
-  # Where admins' songs are saved (Server page). Left empty, they go in the downloads folder too.
+  # Where admins' songs are saved, each playlist in a folder named after it. Left empty, they go in
+  # the downloads folder too.
   # With Docker, write the folder's path inside the containers (like /music) and mount it at that
   # same path in both the app and slskd services in docker-compose.yaml.
   server_folder:
@@ -34,8 +35,8 @@ webserver:
   trust_proxy: False # True when behind Cloudflare or another reverse proxy: take the visitor's IP and
                      # scheme from CF-Connecting-IP / X-Forwarded-For / X-Forwarded-Proto. Only turn this
                      # on if the site can't be reached except through that proxy.
-  # Admins can sign in at /login/ to save songs on the server (Server page) and
-  # manage the queue (All page). Passwords must be at least 8 characters. Left as change-me-please,
+  # Admins can sign in at /login/ to save playlists on the server (Download as on the home page) and
+  # manage the queue (Downloads page). Passwords must be at least 8 characters. Left as change-me-please,
   # a random 32 character password is made on first start and saved here.
   # Add a line per admin, each with their own name and password; the queue shows who added what.
   # Remove the users to turn the admin pages off.
