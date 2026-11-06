@@ -28,9 +28,10 @@ DURATION = ('duration', 'durationms', 'durationsec', 'durationseconds', 'length'
 # "(feat. X)", "[with X]" and "- feat. X" don't help a search and often break it
 CREDIT = re.compile(r'\s*[(\[]\s*(?:feat|ft|featuring|with|w/|prod)\b[^)\]]*[)\]]', re.I)
 CREDIT_TAIL = re.compile(r'\s+-\s+(?:feat|ft|featuring|with|prod)\b.*$', re.I)
-# "- Remastered 2011", "(Single Version)" and similar describe the same song
-VERSION = re.compile(r'\s+-\s+[^-]*\b(?:remaster(?:ed)?|(?:single|album|mono|stereo) version)\b.*$'
-                     r'|\s*[(\[][^)\]]*\b(?:remaster(?:ed)?|(?:single|album|mono|stereo) version)\b[^)\]]*[)\]]', re.I)
+# "- Remastered 2011", "(Single Version)", Beatport's "(Original Mix)" and similar describe the same song
+VERSION = re.compile(r'\s+-\s+[^-]*\b(?:remaster(?:ed)?|(?:single|album|mono|stereo|original) version|original mix)\b.*$'
+                     r'|\s*[(\[][^)\]]*\b(?:remaster(?:ed)?|(?:single|album|mono|stereo|original) version|original mix)\b'
+                     r'[^)\]]*[)\]]', re.I)
 
 
 @dataclass

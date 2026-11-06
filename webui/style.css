@@ -78,6 +78,7 @@ main:focus { outline: none; }
    closer to the edge than the text would. */
 .playlist-bar { padding-inline-end: var(--space-2); }
 .playlist-bar > .grow { min-width: 0; }
+.playlist-bar > .text-caption { white-space: nowrap; }
 
 .search-form-row {
   display: flex;
@@ -263,6 +264,8 @@ main:focus { outline: none; }
   .result-body { flex-direction: column; }
   .cover { width: 96px; }
   .search-form-row > .row { flex: 1 1 100%; }
+  /* The playlist's name needs the room more than its count of missing songs */
+  .playlist-unavailable { display: none; }
   .search-form-row > .row > .button { flex: 1 1 0; white-space: nowrap; padding-inline: var(--space-3); }
   /* ...but the icon-only ones stay square, leaving the room to the ones with words */
   .search-form-row > .row > :is([data-formats-button], [data-sources-button], [data-delivery-button], [data-dj-button]) { flex: none; padding-inline: 0; }

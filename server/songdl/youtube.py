@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 import aiohttp
 
+from .catalog import Song
 from .errors import UserError
 
 log = logging.getLogger('songdl')
@@ -67,6 +68,15 @@ def video_id(text):
         return None
     m = VIDEO.search(str(text or ''))
     return m.group(1) if m else None
+
+
+def find(text):
+    """(kind, id) for a YouTube playlist or video link, or None."""
+    if pid := playlist_id(text):
+        return 'playlist', pid
+    if vid := video_id(text):
+        return 'song', vid
+    return None
 
 
 # Split title  ------------------------------------------------------------
@@ -265,8 +275,17 @@ async def video(vid):
 
 
 class YouTube:
+    name = 'YouTube'
+
     def __init__(self):
         self.reads = asyncio.Semaphore(READS)
+
+    async def read(self, kind, xid):
+        if kind == 'playlist':
+            return await self.playlist(xid)
+        found = await video(xid)
+        return Song(found.song, found.artist, video=found.id,
+                    extra={'title': found.title, 'channel': found.channel})
 
     async def playlist(self, pid):
         if pid.startswith('RD'):

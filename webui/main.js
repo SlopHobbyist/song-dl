@@ -524,30 +524,54 @@
   }
 
   /* --------------------------------------------------- Playlist links
-     A link to a single YouTube video becomes a search for its song.
-     A Spotify or YouTube playlist link, pasted in the song search box, is read
-     by the server into a CSV of the whole playlist. The CSV then stands in for
-     an uploaded file: it can be saved for later, or scanned like any other.
+     A link from a music service, pasted in the song search box, is read by the
+     server (/api/link, see links.py). A playlist or album comes back as a CSV
+     of its songs, which then stands in for an uploaded file: it can be saved
+     for later, or scanned like any other. A single song comes back as the
+     search for it.
      The playlist panel only opens once there is a playlist: a link like that,
      or a CSV chosen with the Playlist button (or dropped on the search). */
 
-  var SPOTIFY_PLAYLIST = /(?:\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:embed\/)?(?:user\/[^\/\s]+\/)?playlist\/|\bspotify:(?:user:[^:\s]+:)?playlist:)[A-Za-z0-9]{22}\b/;
-  var SPOTIFY_OTHER = /\bopen\.spotify\.com\/(?:intl-[\w-]+\/)?(?:track|album|artist|episode|show)\//;
+  /* A link to one of the services the server reads, or a share link that leads to one */
+  var MUSIC_LINK = /(?:^|[\s\/.])(?:(?:open|play)\.spotify\.com|spotify\.(?:app\.)?link|(?:www\.|m\.|music\.)?youtube\.com|youtu\.be|(?:music|itunes|embed\.music|geo\.music)\.apple\.com|(?:www\.)?deezer\.com|link\.deezer\.com|d(?:eezer|zr)\.page\.link|(?:www\.|listen\.|embed\.)?tidal\.com|(?:www\.|open\.|play\.)?qobuz\.com|music\.amazon\.[a-z.]{2,6}|(?:www\.)?amazon\.[a-z.]{2,6}\/music|(?:www\.)?pandora\.com|pandora\.app\.link|(?:www\.)?beatport\.com)\/\S*|\bspotify:\S+/i;
   /* youtube.com/playlist?list=, watch?v=…&list=, youtu.be/…?list=, music.youtube.com/… */
   var YOUTUBE_PLAYLIST = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com|youtu\.be)\/\S*?[?&]list=[A-Za-z0-9_-]{10,64}/;
   /* A single video: watch?v=, youtu.be/, shorts/, live/, embed/ (a link that names a playlist is the playlist's) */
   var YOUTUBE_VIDEO = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?(?:youtube\.com\/(?:watch\?(?:\S*?&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)[A-Za-z0-9_-]{11}(?![A-Za-z0-9_-])/;
-  var YOUTUBE_OTHER = /(?:^|[\/.\s])(?:(?:www|m|music)\.)?youtube\.com\/(?:@|channel\/|c\/|user\/)/;
+  /* What a single song's link looks like on the other services: /track/<id>, Apple's /song/ and
+     ?i=, Amazon's trackAsin=, Pandora's …/TR<id>. Anything else is taken for a playlist or album
+     until the server says otherwise. */
+  var SONG_PATH = /(?:\/tracks?\/|spotify:track:|\/song\/|[?&](?:i|trackAsin)=\d|[?&]trackAsin=|\/TR[A-Za-z0-9]{6,}(?:[\/?#]|$))/i;
+  /* Share links that only redirect: what they lead to isn't known until the server follows them */
+  var SHORT_LINK = /(?:^|[\s\/.])(?:spotify\.(?:app\.)?link|link\.deezer\.com|d(?:eezer|zr)\.page\.link|pandora\.app\.link)\//i;
+  var LINK_SOURCES = [
+    [/spotify/i, 'Spotify'], [/youtu/i, 'YouTube'], [/apple\.com/i, 'Apple Music'], [/deezer|dzr\./i, 'Deezer'],
+    [/tidal/i, 'Tidal'], [/qobuz/i, 'Qobuz'], [/amazon/i, 'Amazon Music'], [/pandora/i, 'Pandora'],
+    [/beatport/i, 'Beatport']
+  ];
 
-  function isPlaylistLink(text) { return SPOTIFY_PLAYLIST.test(text || '') || YOUTUBE_PLAYLIST.test(text || ''); }
-  function linkSource(text) { return YOUTUBE_PLAYLIST.test(text || '') ? 'YouTube' : 'Spotify'; }
+  function linkSource(text) {
+    for (var i = 0; i < LINK_SOURCES.length; i++) {
+      if (LINK_SOURCES[i][0].test(text)) return LINK_SOURCES[i][1];
+    }
+    return 'the link';
+  }
+
+  /* 'list' (a playlist, album or chart), 'song', or null when only the server can tell */
+  function linkKind(text) {
+    if (YOUTUBE_PLAYLIST.test(text)) return 'list';
+    if (YOUTUBE_VIDEO.test(text) || SONG_PATH.test(text)) return 'song';
+    if (SHORT_LINK.test(text)) return null;
+    return 'list';
+  }
 
   /* The playlist read from a link: { url, file, name, total, maxScan }, or null
      when the playlist panel holds an uploaded file (or nothing). */
   var linked = null;
   var linkRun = 0;
   /* The YouTube video a search came from: { query, id }. If Soulseek doesn't have
-     the song, YouTube's fallback takes this video instead of searching. */
+     the song, YouTube's fallback takes this video instead of searching. A song
+     link from another service only gives the search. */
   var videoHint = null;
 
   /* Saves a File the page made (the playlist CSV) under its own name. */
@@ -623,11 +647,11 @@
       announce(file.name + ' selected');
     }
 
-    function showReading(source) {
+    function showReading(source, what) {
       list.innerHTML =
         '<div class="search search-hero playlist-bar" aria-busy="true">' +
           '<span class="icon" aria-hidden="true">hourglass_top</span>' +
-          '<span class="grow text-truncate">Reading the playlist from ' + source + '…' +
+          '<span class="grow text-truncate">Reading the ' + what + ' from ' + source + '…' +
             (source === 'YouTube' ? ' A big one takes up to a minute.' : '') + '</span>' +
           removeButton('playlist') +
         '</div>';
@@ -644,7 +668,9 @@
             (tooBig ? ' title="' + (serverMode() ? 'Imports' : 'Scans') + ' are limited to ' + limit + ' songs"' : '') + '>' +
             count(linked.total) + ' song' + (linked.total === 1 ? '' : 's') + '</span>' +
           (linked.unavailable
-            ? '<span class="text-caption text-muted" title="Deleted or private videos. They stay in the CSV, but there is nothing to search for.">' +
+            ? '<span class="text-caption text-muted playlist-unavailable" title="' + (linked.source === 'youtube'
+                ? 'Deleted or private videos. They stay in the CSV, but there is nothing to search for.'
+                : escapeHtml(linked.sourceName) + ' lists these songs but doesn\'t have them any more, so they aren\'t in the CSV.') + '">' +
               linked.unavailable + ' unavailable</span>'
             : '') +
           '<button class="button button-outlined button-sm" type="button" data-action="save-csv"' +
@@ -654,67 +680,108 @@
         '</div>';
     }
 
+    /* The server read a playlist or album: it stands in for a chosen file from now on */
+    function useLinked(url, res) {
+      linked = {
+        url: url,
+        file: new File([res.csv], res.filename, { type: 'text/csv' }),
+        name: res.name,
+        source: res.source,
+        sourceName: res.sourceName,
+        total: res.total,
+        unavailable: res.unavailable || 0,
+        maxScan: res.maxScan,
+        maxImport: res.maxImport
+      };
+      showLinked();
+      setIdle(scanButton);
+      if (importButton) importButton.removeAttribute('aria-disabled');
+      announce(res.name + ': ' + res.total + ' songs. Ready to ' + (serverMode() ? 'import or scan' : 'scan') +
+        ', or download the CSV.');
+      if (!scanButton.closest('[data-panel]').hidden) scanButton.focus();
+    }
+
+    /* The server read a single song: search for it */
+    function useSong(url, res) {
+      var form = $('#search-form');
+      if (!form || !q) return;
+      if (form.hidden) showPanel('search', q);
+      if (q.value.trim() !== url) return;   // typed over while it was read
+      q.value = res.query;
+      videoHint = res.video ? { query: res.query, id: res.video } : null;
+      form.requestSubmit();
+    }
+
+    /* A playlist or album link: the playlist panel shows it being read */
     async function read(url) {
       var run = ++linkRun;
       linked = null;
       input.value = '';
       var source = linkSource(url);
-      showReading(source);
-      setBusy(scanButton, 'Reading playlist');
+      var what = /\/albums?\//i.test(url) ? 'album' : /beatport/i.test(url) ? 'chart' : 'playlist';
+      showReading(source, what);
+      setBusy(scanButton, 'Reading ' + what);
       if (importButton) importButton.setAttribute('aria-disabled', 'true');
-      announce('Reading the playlist from ' + source);
+      announce('Reading the ' + what + ' from ' + source);
       try {
-        var res = await api('POST', '/api/playlist-link', { url: url });
+        var res = await api('POST', '/api/link', { url: url });
         if (run !== linkRun) return;
-        linked = {
-          url: url,
-          file: new File([res.csv], res.filename, { type: 'text/csv' }),
-          name: res.name,
-          total: res.total,
-          unavailable: res.unavailable || 0,
-          maxScan: res.maxScan,
-          maxImport: res.maxImport
-        };
-        showLinked();
-        setIdle(scanButton);
-        if (importButton) importButton.removeAttribute('aria-disabled');
-        announce(res.name + ': ' + res.total + ' songs. Ready to ' + (serverMode() ? 'import or scan' : 'scan') +
-          ', or download the CSV.');
-        if (!scanButton.closest('[data-panel]').hidden) scanButton.focus();
+        if (res.kind === 'song') {
+          /* It was a song after all: back to the song search with it */
+          forgetLink();
+          list.innerHTML = '';
+          if (q) q.value = url;
+          useSong(url, res);
+          return;
+        }
+        useLinked(url, res);
       } catch (e) {
         if (run !== linkRun) return;
         list.innerHTML = '';
         setIdle(scanButton);
         if (importButton) importButton.removeAttribute('aria-disabled');
+        /* Nothing to show in the playlist panel: back to the search, with the link to fix */
+        if (q) {
+          showPanel('search', q);
+          q.value = url;
+        }
         toast(e.message, 'danger');
       }
     }
 
-    /* A single video: ask the server which song it is, then search for that */
-    async function searchVideo(url) {
+    /* A song link, or a share link that could be anything: the search button
+       shows it being read, then it is searched for (or opens as a playlist) */
+    async function readSong(url) {
       var form = $('#search-form');
       var submit = form && $('button[type="submit"]', form);
       if (!form || !q) return;
       if (form.hidden) showPanel('search', q);
       q.value = url;
-      setBusy(submit, 'Reading video');
-      announce('Reading the video from YouTube');
+      var source = linkSource(url);
+      var run = ++linkRun;
+      setBusy(submit, 'Reading link');
+      announce('Reading the link from ' + source);
       try {
-        var res = await api('POST', '/api/video-link', { url: url });
+        var res = await api('POST', '/api/link', { url: url });
         setIdle(submit);
-        if (q.value.trim() !== url) return;   // typed over while it was read
-        q.value = res.query;
-        videoHint = res.video ? { query: res.query, id: res.video } : null;
-        form.requestSubmit();
+        if (run !== linkRun || q.value.trim() !== url) return;   // typed over while it was read
+        if (res.kind === 'playlist') {
+          q.value = '';
+          showPanel('playlist', scanButton);
+          useLinked(url, res);
+          return;
+        }
+        useSong(url, res);
       } catch (e) {
         setIdle(submit);
-        toast(e.message, 'danger');
+        if (run === linkRun) toast(e.message, 'danger');
       }
     }
 
     function tryLink(text, fromSearch) {
       text = (text || '').trim();
-      if (isPlaylistLink(text)) {
+      if (!MUSIC_LINK.test(text)) return false;
+      if (linkKind(text) === 'list') {
         if (fromSearch) {
           q.value = '';
           showPanel('playlist', scanButton);
@@ -722,15 +789,8 @@
         if (!linked || linked.url !== text) read(text);
         return true;
       }
-      if (YOUTUBE_VIDEO.test(text)) {
-        searchVideo(text);
-        return true;
-      }
-      if (SPOTIFY_OTHER.test(text) || YOUTUBE_OTHER.test(text)) {
-        toast('Only playlist links and YouTube video links work, not Spotify songs, albums, artists or channels.', 'warning');
-        return true;
-      }
-      return false;
+      readSong(text);
+      return true;
     }
 
     /* A link pasted (or dropped) in the song search box switches to the

@@ -1,4 +1,5 @@
-"""Turns a Spotify playlist link into a CSV of every song on it.
+"""Turns a Spotify playlist or album link into a CSV of every song on it, and a
+song link into the song to search for.
 
 Spotify's own Web API wants a developer app, and the playlist's embed page
 (what most link-to-CSV sites read) stops at 100 songs. The web player reads
@@ -14,6 +15,9 @@ fetchPlaylist is a persisted query: it is called by the hash of its text, and
 the hash changes when Spotify updates the web player. Known hashes are tried
 first; if Spotify no longer knows any of them, the current one is read out of
 the web player's script.
+
+Albums are read the same way, through getAlbum (50 songs a page). A song
+link only needs the song's embed page, which names it and its artists.
 
 Public playlists and ones left off the owner's profile both work: anyone with
 the link can read them. Private playlists can't be read without signing in as
@@ -31,20 +35,25 @@ from dataclasses import dataclass, field
 
 import aiohttp
 
+from .catalog import Song
 from .errors import UserError
 
 log = logging.getLogger('songdl')
 
-EMBED_URL = 'https://open.spotify.com/embed/playlist/{id}'
+EMBED_URL = 'https://open.spotify.com/embed/{kind}/{id}'
 QUERY_URL = 'https://api-partner.spotify.com/pathfinder/v1/query'
 PLAYER_URL = 'https://open.spotify.com/'
 USER_AGENT = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
               'Chrome/130.0 Safari/537.36')
 
-# Newest first. A hash read from the web player is put in front of these.
-HASHES = ['21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf',
-          '19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d']
-PAGE = 100            # songs per request (the most pathfinder returns)
+# Per query, newest first. A hash read from the web player is put in front of these.
+HASHES = {
+    'fetchPlaylist': ['21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf',
+                      '19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d'],
+    'getAlbum': ['0b6ce3511e1b02e4a40fa95440f992acbe85080eb308af9194322d708fc1914f'],
+}
+OPERATION = {'playlist': 'fetchPlaylist', 'album': 'getAlbum'}
+PAGES = {'playlist': 100, 'album': 50}   # songs per request (what the web player asks for)
 PARALLEL = 4          # requests at once once the size is known
 MAX_ITEMS = 10_000    # Spotify's own limit on a playlist
 TIMEOUT = 20
@@ -55,9 +64,13 @@ RETRIES = 4
 PLAYLIST = re.compile(
     r'(?:\bopen\.spotify\.com/(?:intl-[\w-]+/)?(?:embed/)?(?:user/[^/\s]+/)?playlist/'
     r'|\bspotify:(?:user:[^:\s]+:)?playlist:)([A-Za-z0-9]{22})\b')
+# open.spotify.com/album/<id> and /track/<id> (also /intl-xx/ and /embed/), spotify:album:<id>
+OTHER = re.compile(r'(?:\b(?:open|play)\.spotify\.com/(?:intl-[\w-]+/)?(?:embed/)?(album|track)/'
+                   r'|\bspotify:(album|track):)([A-Za-z0-9]{22})\b')
+KINDS = {'album': 'album', 'track': 'song'}
 NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 SCRIPT = re.compile(r'https://open\.spotifycdn\.com/cdn/build/web-player/web-player\.[\w.]+\.js')
-HASH_IN_SCRIPT = re.compile(r'"fetchPlaylist","query","([0-9a-f]{64})"')
+HASH_IN_SCRIPT = '"{op}","query","([0-9a-f]{{64}})"'
 
 COLUMNS = ['Track URI', 'Track Name', 'Artist Name(s)', 'Album Name', 'Duration (ms)', 'Added At']
 
@@ -66,6 +79,14 @@ def playlist_id(text):
     """The playlist ID in a Spotify link or URI, or None."""
     m = PLAYLIST.search(str(text or ''))
     return m.group(1) if m else None
+
+
+def find(text):
+    """(kind, id) for a Spotify playlist, album or song link, or None."""
+    if pid := playlist_id(text):
+        return 'playlist', pid
+    m = OTHER.search(str(text or ''))
+    return (KINDS[m.group(1) or m.group(2)], m.group(3)) if m else None
 
 
 class SpotifyError(Exception):
@@ -93,27 +114,49 @@ class Playlist:
 
 
 class Spotify:
+    name = 'Spotify'
+
     def __init__(self):
         self.token = None
         self.token_expires = 0.0
-        self.hashes = list(HASHES)
+        self.hashes = {op: list(h) for op, h in HASHES.items()}
         self.lock = asyncio.Lock()
 
-    async def playlist(self, pid):
-        timeout = aiohttp.ClientTimeout(total=TIMEOUT)
-        async with aiohttp.ClientSession(timeout=timeout, headers={'User-Agent': USER_AGENT}) as http:
-            try:
-                return await self._playlist(http, pid)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                log.warning('spotify playlist %s: %r', pid, e)
-                raise UserError('Couldn\'t reach Spotify. Please try again in a minute.', 502)
-            except SpotifyError as e:
-                log.warning('spotify playlist %s: %s', pid, e)
-                raise UserError('Spotify answered in a way Song-DL doesn\'t understand, so the playlist '
-                                'couldn\'t be read. Try again later, or export it to CSV another way.', 502)
+    async def read(self, kind, xid):
+        return await (self.song(xid) if kind == 'song' else self.playlist(xid, kind))
 
-    async def _playlist(self, http, pid):
-        first = await self._page(http, pid, 0)
+    async def playlist(self, pid, kind='playlist'):
+        """A playlist's songs, or with kind='album' an album's."""
+        return await self._run(kind, pid, self._playlist(kind, pid))
+
+    async def album(self, aid):
+        return await self.playlist(aid, 'album')
+
+    async def song(self, tid):
+        return await self._run('song', tid, self._song(tid))
+
+    async def _run(self, kind, xid, work):
+        try:
+            return await work
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log.warning('spotify %s %s: %r', kind, xid, e)
+            raise UserError('Couldn\'t reach Spotify. Please try again in a minute.', 502)
+        except SpotifyError as e:
+            log.warning('spotify %s %s: %s', kind, xid, e)
+            raise UserError(f'Spotify answered in a way Song-DL doesn\'t understand, so the {kind} '
+                            'couldn\'t be read. Try again later, or export it to CSV another way.', 502)
+
+    def _session(self):
+        timeout = aiohttp.ClientTimeout(total=TIMEOUT)
+        return aiohttp.ClientSession(timeout=timeout, headers={'User-Agent': USER_AGENT})
+
+    async def _playlist(self, kind, pid):
+        async with self._session() as http:
+            return await self._read(http, kind, pid)
+
+    async def _read(self, http, kind, pid):
+        page = PAGES[kind]
+        first = await self._page(http, kind, pid, 0)
         total = min(first['content']['totalCount'], MAX_ITEMS)
         pages = {0: first['content']['items']}
 
@@ -121,9 +164,9 @@ class Spotify:
 
         async def fetch(offset):
             async with sem:
-                pages[offset] = (await self._page(http, pid, offset))['content']['items']
+                pages[offset] = (await self._page(http, kind, pid, offset))['content']['items']
 
-        await asyncio.gather(*(fetch(o) for o in range(len(pages[0]), total, PAGE)))
+        await asyncio.gather(*(fetch(o) for o in range(len(pages[0]), total, page)))
         items = []
         for offset in sorted(pages):
             if offset != len(items):
@@ -134,19 +177,38 @@ class Spotify:
             raise SpotifyError(f'got {len(items)} of {total} items')
         items = items[:total]
 
-        owner = ((first.get('ownerV2') or {}).get('data') or {}).get('name') or ''
-        result = Playlist(pid, first.get('name') or 'Spotify playlist', owner)
-        result.rows = [_row(item) for item in items]
-        log.info('spotify playlist %s: %r, %d songs', pid, result.name, len(result.rows))
+        if kind == 'album':
+            owner = '; '.join(a for a in _names(first.get('artists')) if a)
+            album = first.get('name') or ''
+            result = Playlist(pid, album or 'Spotify album', owner)
+            result.rows = [_row({'itemV2': {'data': {**(item.get('track') or {}), 'albumOfTrack': {'name': album}}}})
+                           for item in items]
+        else:
+            owner = ((first.get('ownerV2') or {}).get('data') or {}).get('name') or ''
+            result = Playlist(pid, first.get('name') or 'Spotify playlist', owner)
+            result.rows = [_row(item) for item in items]
+        log.info('spotify %s %s: %r, %d songs', kind, pid, result.name, len(result.rows))
         return result
 
-    async def _page(self, http, pid, offset):
-        """One page of the playlist: playlistV2 with content.items from `offset`."""
+    async def _song(self, tid):
+        async with self._session() as http:
+            entity = (await self._embed(http, 'track', tid))['props']['pageProps']['state']['data']['entity']
+        try:
+            artists = [a.get('name') or '' for a in entity.get('artists') or []]
+            ms = entity.get('duration')
+            return Song(entity.get('name') or entity['title'], '; '.join(a for a in artists if a), '',
+                        round(ms / 1000) if isinstance(ms, (int, float)) and ms > 0 else None)
+        except (AttributeError, KeyError, TypeError):
+            raise SpotifyError('no song in the embed page')
+
+    async def _page(self, http, kind, pid, offset):
+        """One page of a playlist or album, with content.items from `offset`."""
+        op = OPERATION[kind]
         for attempt in range(RETRIES):
-            token = await self._token(http, pid)
-            for h in list(self.hashes):
+            token = await self._token(http, kind, pid)
+            for h in list(self.hashes[op]):
                 try:
-                    status, body = await self._query(http, token, pid, offset, h)
+                    status, body = await self._query(http, token, kind, pid, offset, h)
                 except _StaleHash:
                     continue
                 if status == 401:
@@ -155,16 +217,20 @@ class Spotify:
                 if status == 429 or status >= 500:
                     await asyncio.sleep(min(2 ** attempt, 8))
                     break
-                return _playlist_v2(body)
+                return _album(body) if kind == 'album' else _playlist_v2(body)
             else:
                 # Spotify knows none of the hashes: find the web player's current one
-                await self._discover_hash(http)
+                await self._discover_hash(http, op)
         raise SpotifyError(f'gave up after {RETRIES} tries at offset {offset}')
 
-    async def _query(self, http, token, pid, offset, sha):
-        variables = {'uri': f'spotify:playlist:{pid}', 'offset': offset, 'limit': PAGE,
-                     'enableWatchFeedEntrypoint': False}
-        params = {'operationName': 'fetchPlaylist', 'variables': json.dumps(variables),
+    async def _query(self, http, token, kind, pid, offset, sha):
+        op = OPERATION[kind]
+        if kind == 'album':
+            variables = {'uri': f'spotify:album:{pid}', 'locale': '', 'offset': offset, 'limit': PAGES[kind]}
+        else:
+            variables = {'uri': f'spotify:playlist:{pid}', 'offset': offset, 'limit': PAGES[kind],
+                         'enableWatchFeedEntrypoint': False}
+        params = {'operationName': op, 'variables': json.dumps(variables),
                   'extensions': json.dumps({'persistedQuery': {'version': 1, 'sha256Hash': sha}})}
         headers = {'Authorization': f'Bearer {token}', 'app-platform': 'WebPlayer', 'Accept': 'application/json'}
         async with http.get(QUERY_URL, params=params, headers=headers) as res:
@@ -173,7 +239,7 @@ class Spotify:
             except (json.JSONDecodeError, aiohttp.ContentTypeError):
                 body = None
             errors = body.get('errors') if isinstance(body, dict) else None
-            if errors and not (body.get('data') or {}).get('playlistV2'):
+            if errors and not (body.get('data') or {}).get('albumUnion' if kind == 'album' else 'playlistV2'):
                 text = json.dumps(errors)[:300]
                 # The hash is unknown, or the query behind it wants variables this doesn't send
                 if 'PersistedQueryNotFound' in text or 'VALIDATION' in text or 'variable' in text:
@@ -184,43 +250,56 @@ class Spotify:
                 raise SpotifyError('query answer was not JSON')
             return res.status, body
 
-    async def _token(self, http, pid):
+    async def _token(self, http, kind, pid):
         async with self.lock:
             if self.token and time.time() < self.token_expires - 60:
                 return self.token
-            async with http.get(EMBED_URL.format(id=pid)) as res:
-                if res.status == 404:
-                    raise UserError(NOT_FOUND, 404)
-                if res.status != 200:
-                    raise SpotifyError(f'embed page answered {res.status}')
-                html = await res.text()
-            m = NEXT_DATA.search(html)
-            try:
-                data = json.loads(m.group(1))
-                session = data['props']['pageProps']['state']['settings']['session']
-                self.token = session['accessToken']
-                self.token_expires = session.get('accessTokenExpirationTimestampMs', 0) / 1000 or time.time() + 600
-            except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
-                raise SpotifyError('no token in the embed page')
+            await self._embed(http, kind, pid)
             return self.token
 
-    async def _discover_hash(self, http):
+    async def _embed(self, http, kind, xid):
+        """The embed page's data for a playlist, album or track; it also holds a fresh token."""
+        async with http.get(EMBED_URL.format(kind=kind, id=xid)) as res:
+            if res.status == 404:
+                raise UserError(NOT_FOUND[KINDS.get(kind, kind)], 404)
+            if res.status != 200:
+                raise SpotifyError(f'embed page answered {res.status}')
+            html = await res.text()
+        m = NEXT_DATA.search(html)
+        try:
+            data = json.loads(m.group(1))
+            if data['props']['pageProps'].get('status') == 404:
+                # A 200 answer whose page is "Page not found"
+                raise UserError(NOT_FOUND[KINDS.get(kind, kind)], 404)
+            session = data['props']['pageProps']['state']['settings']['session']
+            self.token = session['accessToken']
+            self.token_expires = session.get('accessTokenExpirationTimestampMs', 0) / 1000 or time.time() + 600
+        except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
+            raise SpotifyError('no token in the embed page')
+        return data
+
+    async def _discover_hash(self, http, op):
         async with http.get(PLAYER_URL) as res:
             html = await res.text()
+        pattern = re.compile(HASH_IN_SCRIPT.format(op=op))
         for url in dict.fromkeys(SCRIPT.findall(html)):
             async with http.get(url) as res:
-                m = HASH_IN_SCRIPT.search(await res.text())
+                m = pattern.search(await res.text())
             if m:
-                if m.group(1) in self.hashes:
+                if m.group(1) in self.hashes[op]:
                     break
-                log.info('spotify: using fetchPlaylist hash %s… from the web player', m.group(1)[:8])
-                self.hashes.insert(0, m.group(1))
+                log.info('spotify: using %s hash %s… from the web player', op, m.group(1)[:8])
+                self.hashes[op].insert(0, m.group(1))
                 return
-        raise SpotifyError('couldn\'t find a working fetchPlaylist hash')
+        raise SpotifyError(f'couldn\'t find a working {op} hash')
 
 
-NOT_FOUND = ('Spotify couldn\'t find that playlist. Check the link, and that the playlist isn\'t '
-             'private: Song-DL can only read public playlists, or ones shared by link.')
+NOT_FOUND = {
+    'playlist': ('Spotify couldn\'t find that playlist. Check the link, and that the playlist isn\'t '
+                 'private: Song-DL can only read public playlists, or ones shared by link.'),
+    'album': 'Spotify couldn\'t find that album. Check the link.',
+    'song': 'Spotify couldn\'t find that song. Check the link.',
+}
 
 
 def _playlist_v2(body):
@@ -231,11 +310,25 @@ def _playlist_v2(body):
     if kind != 'Playlist':
         # NotFound, or something like Forbidden for a private playlist
         log.info('spotify: playlist is %s: %s', kind, pl.get('message'))
-        raise UserError(NOT_FOUND, 404)
+        raise UserError(NOT_FOUND['playlist'], 404)
     content = pl.get('content') or {}
     if not isinstance(content.get('items'), list) or not isinstance(content.get('totalCount'), int):
         raise SpotifyError('no items in the answer')
     return pl
+
+
+def _album(body):
+    """An album's answer, shaped like a playlist's: content holds its tracksV2."""
+    al = ((body or {}).get('data') or {}).get('albumUnion')
+    if not isinstance(al, dict):
+        raise SpotifyError('no albumUnion in the answer')
+    if al.get('__typename') != 'Album':
+        log.info('spotify: album is %s: %s', al.get('__typename'), al.get('message'))
+        raise UserError(NOT_FOUND['album'], 404)
+    tracks = al.get('tracksV2') or al.get('tracks') or {}
+    if not isinstance(tracks.get('items'), list) or not isinstance(tracks.get('totalCount'), int):
+        raise SpotifyError('no tracks in the answer')
+    return {**al, 'content': tracks}
 
 
 def _names(artists):

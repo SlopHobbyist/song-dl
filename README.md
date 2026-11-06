@@ -14,7 +14,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 - We filter out crap like files labeled "PRIVATE", and remixes+live versions when you didn't search for them 
 - Auto retries a different uploader if slow or stuck
 - Optional direct message captcha solver
-- Sync Spotify and YouTube playlists locally
+- Sync playlists locally from Spotify, YouTube/Music, Apple Music, Amazon Music, Tidal, Deezer, Qobuz, Pandora and Beatport
 - DJ mode for ensuring songs can play on any CDJ/XDJs
 
 ### Limitations
@@ -22,6 +22,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 - If YouTube or SoundCloud scanning or downloading breaks, do `docker compose build --pull --no-cache app` to force `yt-dlp` to update.
 - YouTube audio is lossy (usually Opus around 130 kbps, sometimes AAC in `.m4a`) and is never converted, whatever formats are ticked, unless DJ mode is on. Some DJ software can't play Opus.
 - SoundCloud audio is AAC in `.m4a`, usually 160 kbps, sometimes 96. Tracks under DRM (most major-label uploads) and Go+ previews are skipped, and so are edits, flips and mashups unless you search for one.
+- Links are read the way each service's own web player reads them, without an account. If a service changes how its player works, its links can stop working until Song-DL is updated. Pandora links only work on a server in the US. Beatport's own playlists, and Amazon Music links to `/tracks/` (use the song's Share link instead), can't be read.
 
 ## Page List
 

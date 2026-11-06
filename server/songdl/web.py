@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import dj, imports, jobs, matching, playlist, spotify, turnstile, youtube
+from . import dj, imports, jobs, links, matching, playlist, turnstile, youtube
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -155,8 +155,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
     importer = imports.Importer(cfg, manager.engine, queue)
     zips = {}   # token -> (time made, [download job ids], name)
-    spotify_reader = spotify.Spotify()
-    youtube_reader = youtube.YouTube()
+    readers = links.Readers()
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
     webui = cfg.webui_dir
@@ -294,45 +293,42 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
                  ','.join(formats), ','.join(sources))
         return web.json_response({'id': job.id})
 
-    async def playlist_link(request):
-        """A Spotify or YouTube playlist link -> the whole playlist as a CSV. The page offers
-        the CSV to save, and scans or imports it like any uploaded file."""
+    async def read_link(request):
+        """A playlist, album or song link from a music service (links.py). A playlist or
+        album comes back as a CSV of its songs, which the page offers to save and scans
+        or imports like any uploaded file; a song comes back as the search for it."""
         data = await read_json(request)
-        link = str(data.get('url') or '').strip()[:2000]
-        if pid := spotify.playlist_id(link):
-            source, reader = 'spotify', spotify_reader
-        elif pid := youtube.playlist_id(link):
-            source, reader = 'youtube', youtube_reader
-        else:
-            raise UserError('That isn\'t a Spotify or YouTube playlist link. It should look like '
-                            'https://open.spotify.com/playlist/… or https://www.youtube.com/playlist?list=…')
+        text = str(data.get('url') or '').strip()[:2000]
+        link = links.check(text)
         limit(request, 'link')
-        found = await reader.playlist(pid)
+        link = link or await links.resolve(text)
+        found = await readers.read(link)
+        if isinstance(found, links.Song):
+            track = playlist.Track(found.title, playlist._main_artist(found.artist))
+            query = track.query[:MAX_QUERY].strip() or ' '.join(found.extra.get('title', '').split())[:MAX_QUERY]
+            if not query:
+                raise UserError(f'{link.name} didn\'t say which song that is.', 502)
+            log.info('song link from %s: %s %s -> %r', client_ip(request), link.service, link.id, query)
+            return web.json_response({'kind': 'song', 'source': link.service, 'sourceName': link.name,
+                                      'query': query, 'video': found.video, 'artist': found.artist,
+                                      'song': found.title, **found.extra})
         unavailable = getattr(found, 'unavailable', 0)
-        log.info('playlist link from %s: %s %s, %r, %d songs', client_ip(request), source, pid, found.name, len(found.rows))
+        log.info('%s link from %s: %s %s, %r, %d songs', link.kind, client_ip(request), link.service, link.id,
+                 found.name, len(found.rows))
         return web.json_response({
-            'source': source,
+            'kind': 'playlist',
+            'linkKind': link.kind,
+            'source': link.service,
+            'sourceName': link.name,
             'name': found.name,
             'owner': found.owner,
-            'total': len(found.rows) - unavailable,
+            'total': len(found.rows) - sum(not r.get('Track Name') for r in found.rows),
             'unavailable': unavailable,
             'csv': found.csv(),
             'filename': clean_name(found.name, None, default='playlist') + '.csv',
             'maxScan': playlist.MAX_TRACKS,
             'maxImport': imports.MAX_TRACKS,
         })
-
-    async def video_link(request):
-        """A link to a single YouTube video -> the song search for it."""
-        data = await read_json(request)
-        vid = youtube.video_id(str(data.get('url') or '').strip()[:2000])
-        if not vid:
-            raise UserError('That isn\'t a link to a YouTube video.')
-        limit(request, 'link')
-        found = await youtube.video(vid)
-        query = playlist.Track(found.song, found.artist).query[:MAX_QUERY].strip()
-        return web.json_response({'query': query or found.title[:MAX_QUERY], 'video': vid, 'artist': found.artist,
-                                  'song': found.song, 'title': found.title, 'channel': found.channel})
 
     async def poll_scan(request):
         return web.json_response(find(manager.scans, request, 'playlist scan').view())
@@ -546,8 +542,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/logout', logout),
         web.post('/api/search', start_search),
         web.get('/api/search/{id}', poll_search),
-        web.post('/api/playlist-link', playlist_link),
-        web.post('/api/video-link', video_link),
+        web.post('/api/link', read_link),
+        # The names the page used before every link went to /api/link
+        web.post('/api/playlist-link', read_link),
+        web.post('/api/video-link', read_link),
         web.post('/api/scan', start_scan),
         web.get('/api/scan/{id}', poll_scan),
         web.delete('/api/scan/{id}', cancel_scan),

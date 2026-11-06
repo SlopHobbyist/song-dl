@@ -118,16 +118,20 @@ async def test_mixes_are_refused():
 
 
 async def test_playlist_link_endpoint_reads_youtube(site, fake_ytdlp):
-    res = await site.post('/api/playlist-link', json={'url': f'https://music.youtube.com/playlist?list={PID}'})
+    res = await site.post('/api/link', json={'url': f'https://music.youtube.com/playlist?list={PID}'})
     assert res.status == 200, await res.text()
     body = await res.json()
-    assert (body['source'], body['name'], body['total'], body['unavailable']) == ('youtube', 'Road Trip', 3, 1)
+    assert (body['kind'], body['source'], body['name'], body['total'], body['unavailable']) == \
+        ('playlist', 'youtube', 'Road Trip', 3, 1)
     job = await scan(site, body['csv'], 'flac')
     assert (job['total'], job['skipped']) == (3, 1)
     assert [t['state'] for t in job['tracks']] == ['found', 'found', 'missing']
 
-    res = await site.post('/api/playlist-link', json={'url': 'https://www.youtube.com/watch?v=HU7KlDJVINc'})
-    assert res.status == 400
+    # The page's old address for playlist links still answers
+    res = await site.post('/api/playlist-link', json={'url': f'https://www.youtube.com/playlist?list={PID}'})
+    assert (await res.json())['name'] == 'Road Trip'
+    res = await site.post('/api/link', json={'url': 'https://www.youtube.com/@somechannel'})
+    assert res.status == 400 and 'channels' in (await res.json())['error']
 
 
 # Single videos ------------------------------------------------------------
@@ -184,9 +188,13 @@ async def test_a_video_is_read_as_one_song(fake_youtube):
 
 
 async def test_video_link_endpoint_gives_the_search(site, fake_youtube):
-    res = await site.post('/api/video-link', json={'url': 'https://youtu.be/SMVqAJcX9I4?si=qEkpPHs7BJS4Lpkg'})
+    res = await site.post('/api/link', json={'url': 'https://youtu.be/SMVqAJcX9I4?si=qEkpPHs7BJS4Lpkg'})
     assert res.status == 200, await res.text()
     body = await res.json()
-    assert (body['query'], body['artist'], body['song']) == ('France Joli Gonna Get Over You', 'France Joli', 'Gonna Get Over You')
-    res = await site.post('/api/video-link', json={'url': 'https://www.youtube.com/playlist?list=PLKxmRL6AnoXI'})
+    assert (body['kind'], body['query'], body['artist'], body['song'], body['video']) == \
+        ('song', 'France Joli Gonna Get Over You', 'France Joli', 'Gonna Get Over You', 'SMVqAJcX9I4')
+    assert body['channel'] and body['title']
+    res = await site.post('/api/video-link', json={'url': 'https://youtu.be/SMVqAJcX9I4'})
+    assert (await res.json())['query'] == 'France Joli Gonna Get Over You'
+    res = await site.post('/api/link', json={'url': 'daft punk one more time'})
     assert res.status == 400
