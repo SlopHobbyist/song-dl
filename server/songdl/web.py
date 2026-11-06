@@ -52,7 +52,7 @@ PAGE_ALIASES = {'/index.html': '/'} | {
 # The other files the web server hands out from webui/: the site's files and the
 # kit's stylesheet, script and fonts (the kit's folder also holds docs and a .git)
 PUBLIC_FILE = re.compile(
-    r'^/(style\.css|main\.js'
+    r'^/(style\.css|main\.js|manifest\.webmanifest|assets/icon/home-\d+\.png|assets/icon/icon(@[\d.]+x)?\.(svg|png|webp|jpg)'
     r'|vendored/web-design-wavefront/(design_language\.(css|js)|assets/fonts/[\w.-]+\.woff2))$')
 
 
@@ -532,7 +532,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             file = path.lstrip('/')
         else:
             raise web.HTTPNotFound()
-        return web.FileResponse(webui / file, headers={'Cache-Control': 'no-cache'})
+        headers = {'Cache-Control': 'no-cache'}
+        if file.endswith('.webmanifest'):
+            headers['Content-Type'] = 'application/manifest+json'
+        return web.FileResponse(webui / file, headers=headers)
 
     app = web.Application(middlewares=[middleware], client_max_size=MAX_IMPORT)
     app[IMPORTER] = importer
