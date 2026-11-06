@@ -212,3 +212,15 @@ async def test_a_file_is_converted_once_and_the_copy_is_never_an_original(tmp_pa
     assert fresh.dj_copy(dj.source_key(src))[0] == first.path
     await fresh.refresh()
     assert all(not c.filename.endswith('.wav') for c in fresh.find('daft punk digital love', ['wav', 'flac']))
+
+
+def test_the_copy_keeps_the_source_files_own_tags_and_its_track_number(tmp_path):
+    src = make(tmp_path / 'a.flac', '-c:a', 'flac', '-metadata', 'artist=Bruce Springstein',
+               '-metadata', 'title=Glory Days', '-metadata', 'album=Born In The U.S.A',
+               '-metadata', 'track=10/12', '-metadata', 'date=1984-06-04',
+               '-metadata', 'album_artist=1984')
+    copy = dj.convert(src, tmp_path / 'out', 'x', 'Glory Days', 'Bruce Springstein Albums', 'Wrong')
+    info = dict(chunks(copy.path))[b'LIST']
+    assert b'IART\x12\x00\x00\x00Bruce Springstein\x00' in info and b'Albums' not in info
+    assert b'Wrong' not in info and b'Born In The U.S.A' in info
+    assert b'ITRK\x03\x00\x00\x0010\x00' in info and b'ICRD\x05\x00\x00\x001984\x00' in info

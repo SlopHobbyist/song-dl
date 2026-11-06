@@ -200,6 +200,7 @@ def probe(path: Path):
         'bits': num(s.get('bits_per_raw_sample')) or num(s.get('bits_per_sample')),
         'duration': float(duration) if duration not in (None, 'N/A') else None,
         'container': fmt.get('format_name') or '',
+        'tags': {k.lower(): str(v) for k, v in {**(s.get('tags') or {}), **(fmt.get('tags') or {})}.items()},
     }
 
 
@@ -291,6 +292,7 @@ def convert(src: Path, folder: Path, stem, title='', artist='', album=''):
     it's ready as it is. Blocking: run it in a thread. Returns a Copy."""
     info = probe(src)
     p = plan(info, src)
+    tags = _tags(info['tags'], title, artist, album)
     if p.kind == 'keep':
         log.info('DJ: %s is ready as it is (%s)', src.name, p.reason)
         return Copy(src, p.label, False)
@@ -301,9 +303,9 @@ def convert(src: Path, folder: Path, stem, title='', artist='', album=''):
     started = time.monotonic()
     try:
         if p.kind == 'wav':
-            _write_wav(ffmpeg, soxr, src, part, p, info, (title, artist, album))
+            _write_wav(ffmpeg, soxr, src, part, p, info, tags)
         else:
-            _write_mp3(ffmpeg, soxr, src, part, p, info, (title, artist, album))
+            _write_mp3(ffmpeg, soxr, src, part, p, info, tags)
         if part.stat().st_size >= MAX_BYTES:
             raise UserError(TOO_LONG)
         os.replace(part, dest)
@@ -311,6 +313,16 @@ def convert(src: Path, folder: Path, stem, title='', artist='', album=''):
         part.unlink(missing_ok=True)
     log.info('DJ: %s (%s) -> %s, %s in %.1f s', src.name, p.reason, dest, p.label, time.monotonic() - started)
     return Copy(dest, p.label, True)
+
+
+def _tags(found, title, artist, album):
+    """The tags for the copy: the source file's own (the names a search result carried can be the
+    file name's, 'Artist Albums - Song'), the given ones only where the file has none."""
+    track = (found.get('track') or found.get('tracknumber') or '').split('/')[0].strip()
+    year = (found.get('date') or found.get('year') or '')[:4]
+    return {'title': found.get('title') or title, 'artist': found.get('artist') or artist,
+            'album': found.get('album') or album, 'track': track if track.isdigit() else '',
+            'date': year if year.isdigit() else ''}
 
 
 def _filters(p: Plan, info, soxr, dither):
@@ -380,7 +392,7 @@ def _write_wav(ffmpeg, soxr, src, part, p: Plan, info, tags):
             size -= size % block
         if size % 2:
             out.write(b'\0')   # chunks start on an even byte
-        out.write(_info_chunk(*tags))
+        out.write(_info_chunk(tags))
         total = out.tell()
         out.seek(0)
         out.write(_wav_header(2, p.rate, p.depth, size, total - 8))
@@ -394,10 +406,11 @@ def _wav_header(channels, rate, depth, data_size, riff_size=None):
             + b'data' + struct.pack('<I', data_size))
 
 
-def _info_chunk(title, artist, album):
-    """A LIST/INFO chunk with the title, artist and album, which rekordbox reads from a WAV."""
+def _info_chunk(tags):
+    """A LIST/INFO chunk with the title, artist, album, track and year, which rekordbox reads from a WAV."""
     body = b''
-    for key, value in ((b'INAM', title), (b'IART', artist), (b'IPRD', album)):
+    for key, value in ((b'INAM', tags['title']), (b'IART', tags['artist']), (b'IPRD', tags['album']),
+                       (b'ITRK', tags['track']), (b'ICRD', tags['date'])):
         value = ' '.join(str(value or '').split())[:INFO_MAX]
         if not value:
             continue
@@ -413,8 +426,7 @@ def _write_mp3(ffmpeg, soxr, src, part, p: Plan, info, tags):
     filters = _filters(p, info, soxr, False)
     if filters:
         cmd += ['-af', ','.join(filters)]
-    title, artist, album = tags
-    for key, value in (('title', title), ('artist', artist), ('album', album)):
+    for key, value in tags.items():
         if value:
             cmd += ['-metadata', f'{key}={value}']
     cmd += ['-ar', str(p.rate), '-c:a', 'libmp3lame', '-b:a', '320k', '-id3v2_version', '3', '-f', 'mp3',
