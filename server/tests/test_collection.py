@@ -100,3 +100,60 @@ async def test_without_a_server_folder_the_visitors_folders_are_left_out(tmp_pat
         assert [p['name'] for p in playlists] == ['Party']
     finally:
         await client.close()
+
+
+async def test_a_playlist_is_deleted_with_its_songs(tmp_path, fake):
+    client = await start_site(tmp_path, fake, server_dir=tmp_path)   # music/downloads, as on the real server
+    try:
+        music = tmp_path
+        song = music / 'Mix' / 'disc 1' / 'Daft Punk - Digital Love.wav'
+        make_wav(song)
+        make_wav(music / 'Mix' / 'Justice - Genesis.wav')
+        (music / 'Mix' / 'cover.jpg').write_bytes(b'x')
+        make_wav(music / 'Mix (DJ)' / 'Justice - Genesis.wav')
+        make_wav(music / 'downloads' / UUID / 'Someone - Visitor Song.wav')
+        assert (await client.delete('/api/library/playlist', params={'playlist': 'Mix'})).status == 401
+        await login(client)
+        await client.engine.library.refresh()
+        assert str(song) in client.engine.library.songs
+        await client.get('/api/library/songs', params={'playlist': 'Mix'})   # fills the cache
+
+        # Only playlists: not the visitors' downloads, nor anything outside
+        for name in ('downloads', 'data', '..', '', 'Nope', 'Mix/disc 1'):
+            res = await client.delete('/api/library/playlist', params={'playlist': name})
+            assert res.status == 404, name
+        assert (music / 'downloads' / UUID).is_dir()
+
+        res = await client.delete('/api/library/playlist', params={'playlist': 'Mix'})
+        assert res.status == 200, await res.text()
+        assert not (music / 'Mix').exists()
+        assert (music / 'Mix (DJ)' / 'Justice - Genesis.wav').exists()   # its DJ copies are a playlist of their own
+        assert not any(k.startswith(str(music / 'Mix') + '/') for k in client.engine.library.songs)
+        names = [p['name'] for p in (await (await client.get('/api/library')).json())['playlists']]
+        assert names == ['Mix (DJ)']
+        assert (await client.get('/api/library/songs', params={'playlist': 'Mix'})).status == 404
+        assert (await client.delete('/api/library/playlist', params={'playlist': 'Mix'})).status == 404
+    finally:
+        await client.close()
+
+
+async def test_a_playlist_still_downloading_is_not_deleted(tmp_path, fake):
+    client = await start_site(tmp_path, fake, server_dir=tmp_path / 'music')
+    try:
+        make_wav(tmp_path / 'music' / 'Mix' / 'Justice - Genesis.wav')
+        await login(client)
+        from songdl.server_queue import QueueItem
+        item = QueueItem('x', [], 'Digital Love', 'Daft Punk', '', 'wav', 'Mix/disc 1', 'admin')
+        item.status = 'paused'
+        client.queue.items[item.id] = item
+        res = await client.delete('/api/library/playlist', params={'playlist': 'Mix'})
+        assert res.status == 409
+        assert 'Downloads page' in (await res.json())['error']
+        assert (tmp_path / 'music' / 'Mix' / 'Justice - Genesis.wav').exists()
+
+        item.status = 'cancelled'
+        res = await client.delete('/api/library/playlist', params={'playlist': 'Mix'})
+        assert res.status == 200
+        assert not (tmp_path / 'music' / 'Mix').exists()
+    finally:
+        await client.close()

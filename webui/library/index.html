@@ -91,6 +91,21 @@
   </div>
 </dialog>
 
+<dialog class="dialog dialog-sm" id="dlg-delete-playlist" aria-labelledby="dlg-delete-playlist-title" aria-describedby="dlg-delete-playlist-body">
+  <div class="dialog-header">
+    <span class="icon text-danger" aria-hidden="true">delete</span>
+    <h2 class="dialog-title" id="dlg-delete-playlist-title">Delete this playlist?</h2>
+  </div>
+  <div class="dialog-body" id="dlg-delete-playlist-body">
+    <strong id="dlg-delete-playlist-name">This playlist</strong><span id="dlg-delete-playlist-songs"></span> will be
+    deleted from the server. This can't be undone.
+  </div>
+  <div class="dialog-actions">
+    <button class="button button-text" type="button" data-dialog-close="cancel">Cancel</button>
+    <button class="button button-filled button-danger" type="button" data-dialog-close="delete">Delete playlist</button>
+  </div>
+</dialog>
+
 <footer class="site-footer">
   <!-- TODO: point at the real repository -->
   <a class="site-footer-link" href="https://github.com/SlopHobbyist/song-dl">Github</a>

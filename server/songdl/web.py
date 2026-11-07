@@ -24,7 +24,7 @@ from .collection import Collection
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
-from .server_queue import ServerQueue, normalize_folder
+from .server_queue import STOPPABLE, ServerQueue, normalize_folder
 
 log = logging.getLogger('songdl')
 
@@ -563,6 +563,28 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         log.info('%s deleted %r from the playlist %r', user, rel, name)
         return web.json_response({'ok': True})
 
+    async def library_delete_playlist(request):
+        """Deletes a whole playlist: its folder, its songs, and the link it syncs with. Not
+        while songs are still on their way into it, or they'd make it again."""
+        user = require_admin(request)
+        name = collection._folder(request.query.get('playlist')).name   # 404 when it isn't one
+
+        def into(folder):
+            return folder == name or folder.startswith(name + '/')
+
+        importing = sum(i.state in ('running', 'paused') and into(i.folder) for i in importer.imports.values())
+        queued = sum(i.status in STOPPABLE and into(i.folder) for i in queue.items.values())
+        if name in syncer.busy:
+            raise UserError('That playlist is being synced. Try again in a moment.', 409)
+        if importing or queued:
+            raise UserError(f'Songs are still being downloaded into {name}. Cancel '
+                            f'{"its imports and " if importing else ""}its queued songs on the Downloads page '
+                            f'first, then delete it.', 409)
+        await collection.delete_playlist(name)
+        playlist_links.forget(name)
+        log.info('%s deleted the playlist %r', user, name)
+        return web.json_response({'ok': True})
+
     async def health(request):
         try:
             state = await manager.engine.slskd.server_state()
@@ -626,6 +648,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.get('/api/library/songs', library_songs),
         web.get('/api/library/file', library_file),
         web.delete('/api/library/song', library_delete),
+        web.delete('/api/library/playlist', library_delete_playlist),
         web.post('/api/library/sync', library_sync),
         web.get('/api/health', health),
         web.get('/files/{folder}/{name}', serve_file),

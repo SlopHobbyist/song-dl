@@ -201,3 +201,21 @@ def test_one_song_however_it_is_spelled():
     assert _same_song(track, {'title': 'Digital Love', 'artist': ''})
     assert not _same_song(track, {'title': 'Digital Love', 'artist': 'Someone Else'})
     assert not _same_song(track, {'title': 'Love', 'artist': 'Daft Punk'})
+
+
+async def test_a_deleted_playlist_forgets_its_link(music, remote, tmp_path):
+    iid = await import_linked(music, remote)
+    await wait_for(lambda: import_view(music, iid), lambda v: v['state'] == 'done')
+    await wait_for(lambda: queue_view(music), lambda q: all(i['status'] == 'done' for i in q['items']), timeout=30)
+    assert (await library(music))['Road Trip']['link']
+
+    res = await music.delete('/api/library/playlist', params={'playlist': 'Road Trip'})
+    assert res.status == 200, await res.text()
+    assert 'Road Trip' not in await library(music)
+    saved = json.loads((tmp_path / 'data' / 'playlist-links.json').read_text())
+    assert 'Road Trip' not in saved['playlists']
+
+    # Saved again from the same link, it's a fresh playlist: syncing doesn't think its songs were seen
+    make_wav(tmp_path / 'music' / 'Road Trip' / 'Kavinsky - Nightcall.wav')
+    assert (await library(music))['Road Trip']['link'] is None
+    assert (await sync(music, status=409))['error']

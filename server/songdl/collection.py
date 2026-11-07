@@ -13,6 +13,7 @@ the file itself, so a DJ copy shows what it really is.
 import asyncio
 import logging
 import os
+import shutil
 from pathlib import Path
 
 from . import meta
@@ -144,6 +145,27 @@ class Collection:
         self.library._drop(str(path))
         self.cache.pop(str(path), None)
         log.info('deleted %s from the library', path)
+
+    async def delete_playlist(self, name):
+        """Deletes the playlist's folder and everything in it. Its "(DJ)" copies are a
+        playlist of their own and stay."""
+        folder = self._folder(name)
+        if folder.is_symlink():
+            raise UserError('That playlist is a link to another folder, so it can\'t be deleted here.', 409)
+        try:
+            await asyncio.to_thread(shutil.rmtree, folder)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise UserError(f'Couldn\'t delete all of that playlist: {e.strerror or e}.', 500)
+        finally:
+            # Whatever went, even when something in there couldn't be deleted
+            inside = str(folder) + os.sep
+            for key in [k for k in self.library.songs if k.startswith(inside) and not os.path.exists(k)]:
+                self.library._drop(key)
+            for key in [k for k in self.cache if k.startswith(inside)]:
+                del self.cache[key]
+        log.info('deleted the playlist %s', folder)
 
     def _describe(self, path: Path, rel):
         try:

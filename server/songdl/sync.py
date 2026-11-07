@@ -108,6 +108,11 @@ class Links:
         self.save()
         log.info('playlist %r is linked to %s %s %s (%d songs)', folder, link.service, link.kind, link.id, len(known))
 
+    def forget(self, folder):
+        """The playlist was deleted: a playlist saved under its name later starts afresh."""
+        if self.links.pop(folder, None) is not None:
+            self.save()
+
     def view(self, folder):
         rec = self.links.get(folder)
         if not rec:

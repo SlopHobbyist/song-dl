@@ -2178,7 +2178,10 @@
     var list = $('#library-list');
     var search = $('#library-search');
     var dialog = $('#dlg-delete');
+    var playlistDialog = $('#dlg-delete-playlist');
     var pendingDelete = null;
+    var pendingPlaylist = null;
+    var counts = {};   /* playlist name -> its songs, for the delete dialog */
     var total = 0;
 
     function query(name, path) {
@@ -2240,12 +2243,15 @@
         '<span class="icon text-muted" aria-hidden="true">queue_music</span>' +
         '<span class="library-title"><span class="library-name">' + escapeHtml(playlist.name) + '</span>' +
         '<span class="text-caption text-muted" data-bind="songs"></span></span></summary>' +
-        '<div class="panel-content"><div class="library-sync" data-sync-bar hidden>' +
-          '<span class="icon icon-sm text-muted" aria-hidden="true">link</span>' +
+        '<div class="panel-content"><div class="library-sync">' +
+          '<span class="icon icon-sm text-muted" aria-hidden="true" data-sync-part hidden>link</span>' +
           '<span class="text-caption text-muted grow" data-sync-text></span>' +
-          '<button class="button button-outlined button-sm" type="button" data-action="sync-playlist"' +
+          '<button class="button button-outlined button-sm" type="button" data-action="sync-playlist" data-sync-part hidden' +
             ' aria-label="Sync ' + escapeHtml(playlist.name) + '" title="Download the songs added to it since">' +
             '<span class="icon icon-sm">sync</span> Sync playlist</button>' +
+          '<button class="button button-outlined button-sm button-danger" type="button" data-action="delete-playlist"' +
+            ' aria-label="Delete ' + escapeHtml(playlist.name) + '" title="Delete this playlist and its songs">' +
+            '<span class="icon icon-sm">delete</span> Delete playlist</button>' +
         '</div><div data-songs></div></div>';
       panel.addEventListener('toggle', function () { if (panel.open) loadSongs(panel); });
       return panel;
@@ -2254,9 +2260,8 @@
     /* A playlist added from a link shows where it's from, and a button that downloads the
        songs added to it there since (only those: songs taken off it there stay here). */
     function showSync(panel, link) {
-      var bar = $('[data-sync-bar]', panel);
-      bar.hidden = !link;
-      if (link) $('[data-sync-text]', bar).innerHTML = syncText(link);
+      $$('[data-sync-part]', panel).forEach(function (el) { el.hidden = !link; });
+      $('[data-sync-text]', panel).innerHTML = link ? syncText(link) : '';
     }
 
     async function syncPlaylist(panel, button) {
@@ -2308,6 +2313,7 @@
         var panel = existing[playlist.name] || buildPanel(playlist);
         delete existing[playlist.name];
         setText($('[data-bind="songs"]', panel), songsCaption(playlist));
+        counts[playlist.name] = playlist.songs;
         showSync(panel, playlist.link);
         var at = list.children[index];
         if (at !== panel) list.insertBefore(panel, at || null);
@@ -2323,6 +2329,17 @@
       var sync = event.target.closest('[data-action="sync-playlist"]');
       if (sync) {
         syncPlaylist(sync.closest('.panel'), sync);
+        return;
+      }
+      var drop = event.target.closest('[data-action="delete-playlist"]');
+      if (drop) {
+        var panel = drop.closest('.panel');
+        var name = panel.getAttribute('data-name');
+        var n = counts[name] || 0;
+        pendingPlaylist = panel;
+        $('#dlg-delete-playlist-name').textContent = name;
+        setText($('#dlg-delete-playlist-songs'), n ? ' and its ' + count(n) + ' song' + (n === 1 ? '' : 's') : '');
+        UI.openDialog('dlg-delete-playlist');
         return;
       }
       var button = event.target.closest('[data-action="delete-song"]');
@@ -2352,6 +2369,32 @@
       /* Keep the keyboard where it was: on the next song's delete button, else the playlist */
       var again = nextPath && $$('tr', panel).filter(function (r) { return r.getAttribute('data-path') === nextPath; })[0];
       var focus = again ? $('[data-action="delete-song"]', again) : $('.panel-summary', panel);
+      if (focus && focus.isConnected) focus.focus();
+    });
+
+    playlistDialog.addEventListener('close', async function () {
+      var panel = pendingPlaylist;
+      pendingPlaylist = null;
+      if (playlistDialog.returnValue !== 'delete' || !panel) return;
+      var name = panel.getAttribute('data-name');
+      var button = $('[data-action="delete-playlist"]', panel);
+      if (isBusy(button)) return;
+      /* Where the keyboard goes once it's gone: the next playlist shown, else the one before */
+      var shown = $$('.panel', list).filter(function (p) { return !p.hidden; });
+      var at = shown.indexOf(panel);
+      var nextName = (shown[at + 1] || shown[at - 1] || panel).getAttribute('data-name');
+      setBusy(button, 'Deleting');
+      try {
+        await api('DELETE', '/api/library/playlist' + query(name));
+        toast('Deleted the playlist "' + name + '"', 'success');
+      } catch (e) {
+        toast(e.message, 'danger');
+      } finally {
+        if (button.isConnected) setIdle(button);
+      }
+      try { await loadPlaylists(); } catch (e) {}
+      var next = $$('.panel', list).filter(function (p) { return p.getAttribute('data-name') === nextName; })[0];
+      var focus = next ? $('.panel-summary', next) : search;
       if (focus && focus.isConnected) focus.focus();
     });
 
