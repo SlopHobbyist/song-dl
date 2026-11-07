@@ -321,9 +321,15 @@ class Engine:
                     del self.fetches[fetch.key]
         if cands and cands[0].source != 'soulseek' and all(c.source == cands[0].source for c in cands):
             where = matching.SOURCE_LABELS[cands[0].source]
-            reason = fetch.error if fetch.error and fetch.error != 'Cancelled' else f'{where} didn\'t send the audio'
-            raise UserError(f'Couldn\'t download it from {where}: {reason[0].lower() + reason[1:]}.'
-                            ' Please try again later.')
+            reason = fetch.error if fetch.error and fetch.error != 'Cancelled' else ''
+            if reason == f'{where} didn\'t send the audio':   # says nothing the first half doesn't
+                reason = ''
+            elif reason and not reason.startswith(tuple(matching.SOURCE_LABELS.values())):
+                reason = reason[0].lower() + reason[1:]
+            text = f'Couldn\'t download it from {where}' + (f': {reason}' if reason else '')
+            if 'try again' not in reason:
+                text = text.rstrip('.') + '. Please try again later.'
+            raise UserError(text)
         raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
                         if len(cands) > 1 else
                         'Couldn\'t get the file from the uploader. Please try again later, or search again.')

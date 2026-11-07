@@ -194,6 +194,8 @@ def _search(cfg, query):
 def download_error(e):
     """What to tell a person about a failed SoundCloud download."""
     text = str(e)
+    if youtube_audio.NETWORK_TROUBLE.search(text):
+        return 'The server couldn\'t reach SoundCloud'
     if re.search(r'DRM', text):
         return 'SoundCloud only lets its app play that track'
     if re.search(r'geo|not available (?:in|from) your', text, re.I):

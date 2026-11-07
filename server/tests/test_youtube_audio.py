@@ -2,6 +2,8 @@
 replaced by FakeYouTube; the scoring is tested on titles like real ones."""
 
 import time
+import types
+from pathlib import Path
 
 import pytest
 
@@ -214,3 +216,78 @@ async def test_an_import_queues_songs_soulseek_doesnt_have_from_youtube(admin, y
     items = (await wait_for(lambda: queue_view(admin),
                             lambda v: len(v['items']) == 2 and all(i['status'] == 'done' for i in v['items'])))['items']
     assert sorted(i['format'] for i in items) == ['FLAC', 'Opus']
+
+
+# A network hiccup during a download is tried again
+
+_real_download = youtube_audio._download   # conftest swaps it for an offline stub in every test
+
+
+class FlakyYoutubeDL:
+    """Fails each extract_info with the next error in `errors`, then saves a file."""
+    errors = []
+    calls = 0
+
+    def __init__(self, options):
+        self.folder = Path(options['outtmpl']).parent
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def extract_info(self, url, download=False, process=True):
+        FlakyYoutubeDL.calls += 1
+        if FlakyYoutubeDL.errors:
+            raise FlakyYoutubeDL.errors.pop(0)
+        return {'id': 'x'}
+
+    def process_ie_result(self, info, download=True):
+        path = self.folder / 'x.m4a'
+        path.write_bytes(b'audio')
+        return {'requested_downloads': [{'filepath': str(path)}]}
+
+
+@pytest.fixture
+def flaky(monkeypatch):
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, 'YoutubeDL', FlakyYoutubeDL)
+    monkeypatch.setattr(youtube_audio, 'RETRY_DELAYS', (0, 0))
+    FlakyYoutubeDL.calls = 0
+    return FlakyYoutubeDL
+
+
+def _cand():
+    return types.SimpleNamespace(url='https://soundcloud.com/u/t', meta={})
+
+
+DNS = Exception("Unable to download JSON metadata: Failed to resolve 'api-v2.soundcloud.com' "
+                "([Errno -2] Name or service not known)")
+
+
+def test_a_dns_hiccup_is_tried_again(flaky, tmp_path):
+    flaky.errors = [DNS]
+    fetch = types.SimpleNamespace(cancelled=False)
+    path = _real_download(None, _cand(), tmp_path / 'f', fetch)
+    assert path.read_bytes() == b'audio' and flaky.calls == 2
+
+
+def test_the_network_staying_down_gives_up(flaky, tmp_path):
+    flaky.errors = [DNS, DNS, DNS, DNS]
+    with pytest.raises(Exception, match='Failed to resolve'):
+        _real_download(None, _cand(), tmp_path / 'f', types.SimpleNamespace(cancelled=False))
+    assert flaky.calls == 3 and not (tmp_path / 'f').exists()
+
+
+def test_other_errors_arent_tried_again(flaky, tmp_path):
+    flaky.errors = [Exception('This video is DRM protected')]
+    with pytest.raises(Exception, match='DRM'):
+        _real_download(None, _cand(), tmp_path / 'f', types.SimpleNamespace(cancelled=False))
+    assert flaky.calls == 1
+
+
+def test_network_trouble_is_named():
+    from songdl import soundcloud_audio
+    assert soundcloud_audio.download_error(DNS) == 'The server couldn\'t reach SoundCloud'
+    assert youtube_audio.download_error(Exception('Read timed out')) == 'The server couldn\'t reach YouTube'

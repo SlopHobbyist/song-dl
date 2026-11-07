@@ -21,6 +21,7 @@ import logging
 import math
 import re
 import shutil
+import time
 from pathlib import Path
 
 from . import matching
@@ -43,6 +44,11 @@ LENGTH_CLOSE = 5        # seconds a video may differ from the song's length and 
 LENGTH_FAR = 30         # ...and past this it's another recording
 FORMAT = 'bestaudio/best'
 VIDEO_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
+# A download that fails for one of these (a DNS or network hiccup) is tried again after each delay
+NETWORK_TROUBLE = re.compile(
+    r'failed to resolve|name or service not known|temporary failure in name resolution|timed out'
+    r'|connection (?:reset|refused|aborted)|network is unreachable|remote end closed', re.I)
+RETRY_DELAYS = (3, 10)
 
 # The audio codecs yt-dlp's best audio comes in, and what Song-DL calls them (see matching.LABELS)
 CODECS = {'opus': 'opus', 'mp4a': 'm4a', 'aac': 'm4a', 'vorbis': 'ogg', 'mp3': 'mp3'}
@@ -200,15 +206,23 @@ def _download(cfg, cand, folder: Path, fetch):
                         {'key': 'FFmpegMetadata', 'add_metadata': True}])
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(cand.url, download=False, process=False)
-            if fetch.cancelled:
-                raise Cancelled()
-            # Our artist and title, not YouTube's "Artist - Song (Official Video)"
-            for key in ('title', 'artist', 'album'):
-                if cand.meta.get(key):
-                    info['meta_' + key] = cand.meta[key]
-            info = ydl.process_ie_result(info, download=True)
+        for delay in (*RETRY_DELAYS, None):
+            try:
+                with yt_dlp.YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(cand.url, download=False, process=False)
+                    if fetch.cancelled:
+                        raise Cancelled()
+                    # Our artist and title, not YouTube's "Artist - Song (Official Video)"
+                    for key in ('title', 'artist', 'album'):
+                        if cand.meta.get(key):
+                            info['meta_' + key] = cand.meta[key]
+                    info = ydl.process_ie_result(info, download=True)
+                break
+            except Exception as e:
+                if delay is None or fetch.cancelled or isinstance(e, Cancelled) or not NETWORK_TROUBLE.search(str(e)):
+                    raise
+                log.info('network trouble downloading %s, trying again in %ds: %s', cand.url, delay, e)
+                time.sleep(delay)
         paths = [Path(d['filepath']) for d in (info or {}).get('requested_downloads') or [] if d.get('filepath')]
         path = next((p for p in paths if p.is_file()), None)
         if not path:
@@ -222,6 +236,8 @@ def _download(cfg, cand, folder: Path, fetch):
 def download_error(e):
     """What to tell a person about a failed YouTube download."""
     text = str(e)
+    if NETWORK_TROUBLE.search(text):
+        return 'The server couldn\'t reach YouTube'
     if re.search(r'sign in to confirm|not a bot', text, re.I):
         return 'YouTube is asking Song-DL to prove it isn\'t a bot. Please try again later.'
     if re.search(r'confirm your age|age[- ]restricted|inappropriate', text, re.I):

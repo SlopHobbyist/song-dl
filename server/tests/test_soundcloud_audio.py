@@ -177,6 +177,33 @@ async def test_a_failed_soundcloud_download_says_why(site, sc):
     assert 'only lets its app play' in done['error']
 
 
+async def test_a_dns_hiccup_says_soundcloud_couldnt_be_reached(site, sc):
+    sc.fail = Exception("ERROR: [soundcloud] u/removed-mix: Unable to download JSON metadata: Failed to resolve "
+                        "'api-v2.soundcloud.com' ([Errno -2] Name or service not known)")
+    job = await search(site, 'nobody never heard', [], ['soundcloud'])
+    jid = await fetch(site, job['results'][0]['id'])
+    done = (await finished(site, [jid]))[jid]
+    assert done['error'] == ('Couldn\'t download it from SoundCloud: the server couldn\'t reach SoundCloud.'
+                             ' Please try again later.'), done
+
+
+async def test_a_reason_naming_soundcloud_keeps_its_capital(site, sc):
+    sc.fail = Exception('HTTP Error 429: Too Many Requests')
+    job = await search(site, 'nobody never heard', [], ['soundcloud'])
+    jid = await fetch(site, job['results'][0]['id'])
+    done = (await finished(site, [jid]))[jid]
+    assert done['error'] == ('Couldn\'t download it from SoundCloud: SoundCloud is getting too many requests'
+                             ' from Song-DL. Please try again in a few minutes.'), done
+
+
+async def test_no_reason_isnt_said_twice(site, sc):
+    sc.fail = Exception('something odd')
+    job = await search(site, 'nobody never heard', [], ['soundcloud'])
+    jid = await fetch(site, job['results'][0]['id'])
+    done = (await finished(site, [jid]))[jid]
+    assert done['error'] == 'Couldn\'t download it from SoundCloud. Please try again later.', done
+
+
 # Playlists
 
 async def test_a_scan_tries_soundcloud_then_youtube(site, sc, yt):
