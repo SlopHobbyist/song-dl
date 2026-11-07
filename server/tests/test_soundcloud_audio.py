@@ -215,8 +215,10 @@ async def test_a_scan_tries_soundcloud_then_youtube(site, sc, yt):
     sid = (await res.json())['id']
     job = await wait_for(lambda: _json(site.get(f'/api/scan/{sid}')), lambda v: v['state'] != 'running')
     assert [[r['source'] for r in t['results']] for t in job['tracks']] == [['soulseek'], ['soundcloud'], []]
-    # "Some Other" isn't on SoundCloud (its one track is another song) or YouTube (none of its videos match)
-    assert sc.searches == ['Nobody Never Heard', 'Nobody Some Other'] and yt.searches == ['Nobody Some Other']
+    # "Some Other" isn't on SoundCloud (its one track is another song) or YouTube (none of its videos match,
+    # even when asked for its auto-generated upload)
+    assert sc.searches == ['Nobody Never Heard', 'Nobody Some Other']
+    assert yt.searches == ['Nobody Some Other', 'Nobody Some Other topic']
 
 
 async def test_an_import_queues_a_soundcloud_track(admin, sc, yt):

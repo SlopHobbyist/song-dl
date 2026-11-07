@@ -63,6 +63,10 @@ NOT_THE_SONG = {
 TOPIC = re.compile(r'\s+-\s+Topic$')
 AUDIO = re.compile(r'\b(?:official\s+)?audio\b', re.I)
 OFFICIAL = re.compile(r'\bofficial\b', re.I)
+# YouTube's own uploads of a label's tracks. The search often shows their channel as just
+# "Release - Topic", but the description starts "Provided to YouTube by <label> <title> · <artist> ·
+# <artist> <album> ℗ ...", so the artists are in there
+PROVIDED = re.compile(r'^Provided to YouTube by\b', re.I)
 VIDEO_WORDS = re.compile(r'\b(?:music\s+video|official\s+video|video\s+oficial|clip\s+officiel|m/?v)\b', re.I)
 
 
@@ -72,6 +76,12 @@ def _norm(text):
 
 def _words(text):
     return set(matching.tokens(text or ''))
+
+
+def credits(entry):
+    """The label, title and artists from an auto-generated upload's description, or ''."""
+    text = ' '.join((entry.get('description') or '').split())
+    return text.split('℗')[0] if PROVIDED.match(text) else ''
 
 
 def score(entry, query, artist='', title='', duration=None):
@@ -87,7 +97,12 @@ def score(entry, query, artist='', title='', duration=None):
     if not length or length < MIN_SECONDS or length > max(MAX_SECONDS, (duration or 0) * 1.5):
         return None, False
 
-    text = _words(name) | _words(channel)
+    credited = credits(entry)
+    # An auto-generated upload says who the song is by: someone else's song of the same name isn't it
+    who = _words(artist)
+    if credited and who and len(who & _words(credited)) < math.ceil(len(who) / 2):
+        return None, False
+    text = _words(name) | _words(channel) | _words(credited)
     if TOPIC.search(channel):
         text |= _words(TOPIC.sub('', channel))
     # The song's title (all of a short one, most of a long one), and most of what was typed
@@ -114,7 +129,8 @@ def score(entry, query, artist='', title='', duration=None):
     if OFFICIAL.search(name):
         points += 1
     who = _norm(artist) or None
-    if who and (who in _norm(channel) or _norm(TOPIC.sub('', channel)) in (who, who + 'vevo')):
+    if who and (who in _norm(channel) or _norm(TOPIC.sub('', channel)) in (who, who + 'vevo')
+                or who in _norm(credited)):
         points += 2
     elif not who and (topic or channel.endswith('VEVO')):
         points += 1
@@ -233,6 +249,12 @@ def _download(cfg, cand, folder: Path, fetch):
         raise
 
 
+def passing(e):
+    """The status for a UserError about a failed search: 503 when the network let it down (a DNS
+    hiccup, say), so it's worth trying again in a while; 502 for anything else."""
+    return 503 if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or NETWORK_TROUBLE.search(str(e)) else 502
+
+
 def download_error(e):
     """What to tell a person about a failed YouTube download."""
     text = str(e)
@@ -260,6 +282,23 @@ class YouTubeAudio:
     async def _run(self, func, *args, timeout=SEARCH_TIMEOUT):
         return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout)
 
+    async def _search(self, query):
+        try:
+            return await self._run(_search, self.cfg, query)
+        except Exception as e:   # yt-dlp's DownloadError, or a timeout
+            log.info('youtube search %r failed: %r', query, e)
+            raise UserError('Couldn\'t search YouTube. Please try again in a minute.', passing(e))
+
+    @staticmethod
+    def _score(entries, query, artist, title, duration):
+        """[(points, outlier, entry)] of the entries that might be the song."""
+        scored = []
+        for entry in entries:
+            points, outlier = score(entry, query, artist, title, duration)
+            if points is not None:
+                scored.append((points, outlier, entry))
+        return scored
+
     async def find(self, query, artist='', title='', duration=None, video=None, more=False):
         """The videos that are the song, best first, the first with its quality
         read; [] when YouTube has none. `video` is a video ID to take as is."""
@@ -269,27 +308,30 @@ class YouTubeAudio:
                     return []
                 picks = [({'id': video, 'title': '', 'duration': None}, False)]
             else:
-                try:
-                    entries = await self._run(_search, self.cfg, query)
-                except Exception as e:   # yt-dlp's DownloadError, or a timeout
-                    log.info('youtube search %r failed: %r', query, e)
-                    raise UserError('Couldn\'t search YouTube. Please try again in a minute.', 502)
-                scored = []
-                for entry in entries:
-                    points, outlier = score(entry, query, artist, title, duration)
-                    if points is not None:
-                        scored.append((points, outlier, entry))
+                entries = await self._search(query)
+                scored = self._score(entries, query, artist, title, duration)
+                if not any(not outlier for _, outlier, _ in scored):
+                    # Nothing the right length. YouTube ranks a song's own auto-generated upload
+                    # ("Artist - Topic", "Provided to YouTube by...") low for some songs, but
+                    # finds it when asked for one
+                    seen = {e.get('id') for e in entries}
+                    extra = [e for e in await self._search(query + ' topic') if e.get('id') not in seen]
+                    entries += extra
+                    scored += self._score(extra, query, artist, title, duration)
                 scored.sort(key=lambda s: (not s[1], s[0]), reverse=True)
                 picks = [(entry, outlier) for _, outlier, entry in scored[:KEPT + PROBES]]
                 log.info('youtube search %r: %d of %d videos might be the song', query, len(scored), len(entries))
 
             # Read the best one's formats; a video that can't be read (age-restricted, say) is skipped
+            trouble = None
             for i, (entry, outlier) in enumerate(picks[:PROBES]):
                 url = WATCH_URL.format(id=entry['id'])
                 try:
                     info = await self._run(_probe, self.cfg, url)
                 except Exception as e:
                     log.info('youtube video %s can\'t be read: %r', entry['id'], e)
+                    if passing(e) == 503:
+                        trouble = e
                     continue
                 if not info or not info.get('duration'):
                     continue
@@ -301,6 +343,10 @@ class YouTubeAudio:
                     c.fmt = best.fmt
                     c.filename = re.sub(r'\.\w+$', '.' + best.fmt, c.filename)
                 return [best] + rest
+            if trouble:
+                # Not "YouTube doesn't have it": YouTube couldn't be reached, so it's worth
+                # asking again later
+                raise UserError('Couldn\'t reach YouTube. Please try again in a minute.', 503)
             return []
 
     async def download(self, cand, folder, fetch):

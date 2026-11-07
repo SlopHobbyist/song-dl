@@ -228,7 +228,8 @@ class SoundCloudAudio:
                 tracks = await self._run(_search, self.cfg, query)
             except Exception as e:   # yt-dlp's DownloadError, or a timeout
                 log.info('soundcloud search %r failed: %r', query, e)
-                raise UserError('Couldn\'t search SoundCloud. Please try again in a minute.', 502)
+                raise UserError('Couldn\'t search SoundCloud. Please try again in a minute.',
+                                youtube_audio.passing(e))
         if not duration:
             # The label's own upload is usually under DRM, but it still says how long the song is
             locked = [(points, t['full']) for t in tracks if not t['stream'] and t['full']

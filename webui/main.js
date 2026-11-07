@@ -1716,6 +1716,7 @@
     if (imp.state === 'paused') html += actionButton('resume', 'play_arrow', 'Resume', name);
     if (imp.state === 'cancelled') html += actionButton('resume', 'refresh', 'Restart', name);
     if (imp.state === 'running' || imp.state === 'paused') html += actionButton('cancel', 'block', 'Cancel', name);
+    if (imp.state === 'done' && imp.missing) html += actionButton('retry', 'manage_search', 'Search again for the songs not found in', name);
     if (imp.missing || imp.elsewhere) {
       var label = 'Save a list of the songs of ' + escapeHtml(name) + ' that weren\'t found';
       var menu = 'missing-' + escapeHtml(imp.id);
@@ -1847,7 +1848,8 @@
           toast('Removed "' + name + '". The songs it queued stay in the queue.');
         } else {
           await api('POST', '/api/imports/' + id + '/' + action);
-          toast({ pause: 'Paused', resume: 'Resumed', cancel: 'Cancelled' }[action] + ' "' + name + '"');
+          toast(action === 'retry' ? 'Searching again for the songs of "' + name + '" that weren\'t found'
+            : { pause: 'Paused', resume: 'Resumed', cancel: 'Cancelled' }[action] + ' "' + name + '"');
         }
         await load();
       } catch (e) {

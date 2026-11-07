@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from songdl import youtube_audio
+from songdl import imports, youtube_audio
+from songdl.errors import UserError
 from songdl.youtube_audio import score
 
 from tests.test_site import fetch, finished, queue_view, scan, wait_for
@@ -27,6 +28,9 @@ class FakeYouTube:
         self.probed = []      # video URLs
         self.downloaded = []  # video URLs
         self.fail = None      # an exception every download raises
+        self.search_fails = 0     # searches still to fail as if DNS were down
+        self.probe_fail = None    # an exception every probe raises
+        self.topic_results = None  # what a search ending in " topic" finds, when not the same
         self.results = [
             video('aaaaaaaaaaa', 'Nobody - Never Heard (Live at Wembley)', 'Nobody', views=10**6),
             video('bbbbbbbbbbb', 'Nobody - Never Heard (Official Video)', 'NobodyVEVO', views=10**6),
@@ -36,12 +40,20 @@ class FakeYouTube:
 
     def search(self, cfg, query):
         self.searches.append(query)
+        if self.search_fails:
+            self.search_fails -= 1
+            raise OSError('Failed to resolve www.youtube.com: Temporary failure in name resolution')
+        if query.endswith(' topic') and self.topic_results is not None:
+            return list(self.topic_results)
         return list(self.results)
 
     def probe(self, cfg, url):
         self.probed.append(url)
+        if self.probe_fail:
+            raise self.probe_fail
         vid = url.rsplit('=', 1)[-1]
-        found = next((v for v in self.results if v['id'] == vid), video(vid, 'Some Artist - Pasted Song', 'Some Artist'))
+        found = next((v for v in self.results + (self.topic_results or []) if v['id'] == vid),
+                     video(vid, 'Some Artist - Pasted Song', 'Some Artist'))
         return {**found, 'acodec': 'opus', 'ext': 'webm', 'abr': 129.6, 'asr': 48000, 'filesize': len(OPUS)}
 
     def download(self, cfg, cand, folder, fetch):
@@ -110,7 +122,95 @@ def test_the_playlists_length_picks_the_recording():
     assert same[0] > edit[0] and not same[1] and edit[1]
 
 
+def provided(vid, title, artists, duration, label='echo cult'):
+    """YouTube's own upload of a label's track, as a search lists it: the channel often just
+    "Release - Topic", the artists only in the description."""
+    return {**video(vid, title, 'Release - Topic', duration),
+            'description': f'Provided to YouTube by {label} {title} · {" · ".join(artists)} {title} '
+                           f'℗ 2026 {label} Released on: 2026-07-24 ...'}
+
+
+def test_an_auto_generated_upload_is_known_by_its_credits():
+    entry = provided('a' * 11, 'Deep In Passion', ['MAKS (FR)', 'JHOS'], 166)
+    points, outlier = score(entry, 'MAKS (FR) Deep In Passion', 'MAKS (FR)', 'Deep In Passion', 165)
+    assert points is not None and points > 8 and not outlier
+    edit = provided('b' * 11, 'The Second Coming (Edit)', ["Livin' Large"], 249)
+    assert score(edit, "Livin' Large The Second Coming - Edit", "Livin' Large", 'The Second Coming - Edit', 249)[0]
+
+
+def test_someone_elses_song_of_the_same_name_is_not_it():
+    entry = provided('a' * 11, 'On My Mind', ['Intense Love & Life'], 298, 'The Orchard Enterprises')
+    assert score(entry, 'Alcanza On My Mind', 'Alcanza', 'On My Mind', 286)[0] is None
+
+
 # Searching
+
+async def test_youtube_is_asked_for_the_auto_generated_upload_when_nothing_fits(yt):
+    # The first search has only a short clip; the album track turns up when asked for "topic"
+    yt.results = [video('a' * 11, 'Alcanza - On My Mind', 'Alcanza', 155)]
+    yt.topic_results = [provided('b' * 11, 'On My Mind', ['Alcanza'], 286, 'Symphonic Distribution')]
+    cands = await youtube_audio.YouTubeAudio(None).find('Alcanza On My Mind', 'Alcanza', 'On My Mind', 286)
+    assert yt.searches == ['Alcanza On My Mind', 'Alcanza On My Mind topic']
+    assert cands[0].url.endswith('b' * 11) and cands[1].url.endswith('a' * 11)
+
+    # A search that has the song needs no second one
+    yt.searches.clear()
+    yt.results = FakeYouTube().results
+    await youtube_audio.YouTubeAudio(None).find('Nobody Never Heard', 'Nobody', 'Never Heard', 240)
+    assert yt.searches == ['Nobody Never Heard']
+
+
+async def test_youtube_out_of_reach_is_not_youtube_without_the_song(yt):
+    ya = youtube_audio.YouTubeAudio(None)
+    yt.search_fails = 1
+    with pytest.raises(UserError) as e:
+        await ya.find('Nobody Never Heard', 'Nobody', 'Never Heard', 240)
+    assert e.value.status == 503
+    # Found, but none of the videos could be read for the same reason
+    yt.probe_fail = OSError('Temporary failure in name resolution')
+    with pytest.raises(UserError) as e:
+        await ya.find('Nobody Never Heard', 'Nobody', 'Never Heard', 240)
+    assert e.value.status == 503
+    # ...while a video that can't be read for its own reasons is just skipped
+    yt.probe_fail = OSError('Sign in to confirm your age')
+    assert await ya.find('Nobody Never Heard', 'Nobody', 'Never Heard', 240) == []
+
+
+async def test_an_import_searches_again_after_a_dns_hiccup(admin, yt, fake, monkeypatch):
+    monkeypatch.setattr(imports, 'RETRY_SECONDS', 0.2)
+    yt.search_fails = 2
+    res = await admin.post('/api/imports', json={
+        'csv': 'title,artist\nNever Heard,Nobody\n', 'name': 'mix', 'formats': ['flac'],
+        'sources': ['soulseek', 'youtube'], 'folder': 'Mix'})
+    iid = (await res.json())['id']
+
+    async def view():
+        return next(i for i in (await _json(admin.get('/api/imports')))['imports'] if i['id'] == iid)
+
+    imp = await wait_for(view, lambda v: v['state'] == 'done', timeout=30)
+    assert (imp['found'], imp['missing']) == (1, 0)
+    assert len(yt.searches) == 3
+    # Soulseek had already said no, so it wasn't asked again
+    assert len(fake.searches) == 2   # the song, then its title alone
+
+
+async def test_an_import_searches_again_for_the_songs_it_didnt_find(admin, yt, fake):
+    res = await admin.post('/api/imports', json={
+        'csv': 'title,artist\nNever Heard,Nobody\n', 'name': 'mix', 'formats': ['flac'],
+        'sources': ['soulseek', 'youtube'], 'folder': 'Mix'})
+    iid = (await res.json())['id']
+
+    async def view():
+        return next(i for i in (await _json(admin.get('/api/imports')))['imports'] if i['id'] == iid)
+
+    yt.results = []
+    imp = await wait_for(view, lambda v: v['state'] == 'done', timeout=30)
+    assert imp['missing'] == 1
+    yt.results = FakeYouTube().results   # it's on YouTube now
+    assert (await admin.post(f'/api/imports/{iid}/retry')).status == 200
+    imp = await wait_for(view, lambda v: v['state'] == 'done' and not v['missing'], timeout=30)
+    assert (imp['found'], imp['queued']) == (1, 1)
+
 
 async def test_a_song_soulseek_doesnt_have_comes_from_youtube(site, yt):
     job = await search(site, 'nobody never heard', ['flac'], ['soulseek', 'youtube'])

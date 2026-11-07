@@ -47,16 +47,26 @@ WORKERS = 3              # songs searched at once; the search limit sets the rea
 RETRY_SECONDS = 30       # wait after Soulseek or slskd goes away
 TICK_SECONDS = 2
 SEARCHES_PER_SONG = 1.15  # one per format, plus the odd second search for the title alone
+MAX_TRIES = 8            # times a song is searched again after a search that failed (not "no match")
+
+
+class TryLater(Exception):
+    """A search failed for a reason that passes (the network, a source being away), so the song
+    isn't "not found" yet."""
 
 
 class ImportTrack:
-    __slots__ = ('track', 'state', 'found', 'note')
+    __slots__ = ('track', 'state', 'found', 'note', 'tries', 'searched')
 
     def __init__(self, track: Track, state='pending', found=(), note=''):
         self.track = track
         self.state = state
         self.found = list(found)   # the format (or 'soundcloud' / 'youtube') queued; at most one
         self.note = note
+        # Not saved: the searches that failed, and the formats and sources already searched
+        # without finding it, so a search tried again later doesn't repeat them
+        self.tries = 0
+        self.searched = set()
 
     def to_list(self):
         t = self.track
@@ -236,6 +246,20 @@ class Importer:
             imp.run_started, imp.run_done = None, 0
             self._changed()
 
+    def retry_missing(self, imp):
+        """Searches again for the songs a finished import didn't find."""
+        if imp.state != 'done':
+            return
+        missing = [t for t in imp.tracks if t.state == 'missing']
+        for t in missing:
+            t.state, t.note, t.tries = 'pending', '', 0
+            t.searched.clear()
+        if missing:
+            imp.state, imp.note, imp.finished, imp.next = 'running', '', None, 0
+            imp.run_started, imp.run_done = None, 0
+            log.info('import %r: searching again for %d song(s)', imp.name, len(missing))
+            self._changed()
+
     def cancel(self, imp):
         if imp.state in ('running', 'paused'):
             imp.state, imp.note = 'cancelled', ''
@@ -334,6 +358,8 @@ class Importer:
             for source in imp.sources:
                 if t.found:   # (an import saved by an older version may have one already)
                     break
+                if source in t.searched:
+                    continue
                 if source == 'soulseek':
                     ok = await self._soulseek(imp, t)
                 else:
@@ -343,6 +369,11 @@ class Importer:
             t.state = 'found' if t.found else 'missing'
             t.note = ''
             imp.run_done += 1
+        except TryLater as e:
+            t.tries += 1
+            log.info('import %r: %s; searching for %r again later (try %d of %d)', imp.name, e, t.track.label,
+                     t.tries, MAX_TRIES)
+            self._retry_later(imp, t)
         except SlskdError as e:
             log.warning('import %r: slskd error on %r: %s', imp.name, t.track.label, e)
             self._retry_later(imp, t)
@@ -356,15 +387,29 @@ class Importer:
         finally:
             self._changed()
 
+    def _failed(self, t: ImportTrack, step, e: UserError):
+        """After a search in `step` (a format or a source) raised `e`: TryLater when it's worth
+        another go, else the song counts as not there."""
+        if e.status != 503:   # "No match found", or a failure that won't pass
+            if e.status != 400:
+                log.info('import search for %r in %s failed: %s', t.track.label, step, e)
+            t.searched.add(step)
+            return
+        if t.tries < MAX_TRIES:
+            raise TryLater(f'{SOURCE_LABELS.get(step, "Soulseek")} search failed ({e})')
+        log.info('import search for %r in %s failed for good: %s', t.track.label, step, e)
+        t.searched.add(step)
+
     async def _soulseek(self, imp: Import, t: ImportTrack):
         """Queues the song from Soulseek in the first of the formats it has. False when the import
         had to stop."""
         for fmt in imp.formats:
+            if fmt in t.searched:
+                continue
             try:
                 cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
             except UserError as e:
-                if e.status != 400:   # 400 is "No match found"
-                    log.info('import search for %r failed: %s', t.track.label, e)
+                self._failed(t, fmt, e)
                 continue
             entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
             try:
@@ -407,9 +452,10 @@ class Importer:
         try:
             cands = await self.engine.find_elsewhere(source, t.track, more=more_after(source, imp.sources))
         except UserError as e:
-            log.info('import: %s search for %r failed: %s', source, t.track.label, e)
+            self._failed(t, source, e)
             return True
         if not cands:
+            t.searched.add(source)
             return True
         entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album)
         try:

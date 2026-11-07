@@ -641,6 +641,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/imports/{id}/pause', import_action(importer.pause)),
         web.post('/api/imports/{id}/resume', import_action(importer.resume)),
         web.post('/api/imports/{id}/cancel', import_action(importer.cancel)),
+        web.post('/api/imports/{id}/retry', import_action(importer.retry_missing)),
         web.delete('/api/imports/{id}', import_action(importer.delete)),
         web.get('/api/library', library_playlists),
         web.get('/api/library/songs', library_songs),

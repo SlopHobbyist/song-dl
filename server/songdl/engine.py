@@ -231,7 +231,7 @@ class Engine:
             await asyncio.sleep(POLL_SECONDS)
             s = await self.slskd.get_search(search_id)
             if 'Errored' in (s.get('state') or ''):
-                raise UserError('The Soulseek search failed. Please try again.')
+                raise UserError('The Soulseek search failed. Please try again.', 503)
             if s.get('isComplete'):
                 break
             n = s.get('responseCount') or 0
