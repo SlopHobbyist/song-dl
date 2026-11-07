@@ -206,6 +206,12 @@ class ServerQueue:
                 n += 1
         return n
 
+    def retry_failed(self):
+        failed = [i for i in self.items.values() if i.status == 'failed']
+        for item in failed:
+            self.resume(item)
+        return len(failed)
+
     def clear_done(self):
         done = [i for i in self.items.values() if i.status == 'done']
         for item in done:

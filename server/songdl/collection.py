@@ -138,6 +138,24 @@ class Collection:
     def file(self, name, rel):
         return self._song(name, rel)
 
+    async def zip_files(self, name):
+        return await asyncio.to_thread(self._zip_files, name)
+
+    def _zip_files(self, name):
+        """[(its place in the playlist, path)] of every song in it, by name, for a zip. A song
+        that is really somewhere outside the playlist (a symlink) is left out."""
+        folder = self._folder(name)
+        inside = folder.resolve()
+        out = []
+        for path, rel in self._files(folder):
+            try:
+                path.resolve().relative_to(inside)
+            except (OSError, ValueError):
+                continue
+            out.append((rel, path))
+        out.sort(key=lambda f: f[0].casefold())
+        return out
+
     async def delete(self, name, rel):
         path = self._song(name, rel)
         folder = self._folder(name)

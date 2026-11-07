@@ -5,6 +5,7 @@ import io
 import json
 import zipfile
 
+from songdl.web import IMPORTER
 from tests.conftest import ADMIN, start_site
 
 
@@ -387,3 +388,17 @@ async def test_a_playlist_is_saved_in_a_folder_named_after_it(tmp_path, fake):
         assert (await res.json())['folder'] == 'downloads (2)'
     finally:
         await client.close()
+
+
+async def test_retry_all_failed(admin):
+    ids = [r['id'] for r in await found_in(admin, 'daft punk digital love', ['wav', 'flac'])]
+    await admin.post('/api/queue', json={'folder': 'retry', 'results': ids})
+    view = await wait_for(lambda: queue_view(admin), lambda v: v['items'] and all(i['status'] == 'done' for i in v['items']))
+    queue = admin.server.app[IMPORTER].queue
+    first, second = (queue.get(i['id']) for i in view['items'])
+    queue._fail(first, 'Couldn\'t get the file from the uploader.')
+    res = await admin.post('/api/queue/retry-failed')
+    assert (await res.json()) == {'retried': 1}
+    assert first.status in ('queued', 'downloading', 'done') and first.note != 'Couldn\'t get the file from the uploader.'
+    assert second.status == 'done'
+    assert (await (await admin.post('/api/queue/retry-failed')).json()) == {'retried': 0}

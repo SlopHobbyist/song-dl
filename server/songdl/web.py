@@ -411,26 +411,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             files.append((name, job.path))
         if not files:
             raise UserError('There\'s nothing to zip. The files may have expired.', 404)
-        zip_name = clean_name(zip_name, None, default='songs') + '.zip'
-        resp = web.StreamResponse(headers={
-            'Content-Type': 'application/zip',
-            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(zip_name)}",
-            'Cache-Control': 'no-store',
-        })
-        await resp.prepare(request)
-        sink = _Sink()
-        with zipfile.ZipFile(sink, 'w', zipfile.ZIP_STORED) as zf:   # audio doesn't compress
-            for name, path in files:
-                info = zipfile.ZipInfo.from_file(path, name)
-                info.compress_type = zipfile.ZIP_STORED
-                with path.open('rb') as src, zf.open(info, 'w', force_zip64=True) as dst:
-                    while chunk := src.read(ZIP_CHUNK):
-                        dst.write(chunk)
-                        await sink.drain(resp)
-                await sink.drain(resp)
-        await sink.drain(resp)
-        await resp.write_eof()
-        return resp
+        return await stream_zip(request, files, zip_name)
 
     # The server queue (admins only)
 
@@ -480,6 +461,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         require_admin(request)
         return web.json_response({'paused': queue.pause_all()})
 
+    async def retry_failed(request):
+        require_admin(request)
+        return web.json_response({'retried': queue.retry_failed()})
+
     async def clear_done(request):
         require_admin(request)
         return web.json_response({'cleared': queue.clear_done()})
@@ -525,8 +510,11 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         require_admin(request)
         imp = importer.get(request.match_info['id'])
         kind = request.match_info['ext']
-        name = clean_name(imp.name + ' - not found', None, default='not found') + '.' + kind
-        text, mime = (imp.missing_txt(), 'text/plain') if kind == 'txt' else (imp.missing_csv(), 'text/csv')
+        # ?lossy=1: the songs only found on SoundCloud or YouTube, not the ones found nowhere
+        lossy = request.query.get('lossy') == '1'
+        what = ' - lossy only' if lossy else ' - not found'
+        name = clean_name(imp.name + what, None, default=what[3:]) + '.' + kind
+        text, mime = (imp.missing_txt(lossy), 'text/plain') if kind == 'txt' else (imp.missing_csv(lossy), 'text/csv')
         return web.Response(text=text, content_type=mime, headers={
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
 
@@ -555,6 +543,15 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         return web.FileResponse(path, headers={
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(clean_name(None, path))}",
         })
+
+    async def library_zip(request):
+        """A whole playlist as one zip, its sub-folders kept."""
+        require_admin(request)
+        name = request.query.get('playlist')
+        files = await collection.zip_files(name)
+        if not files:
+            raise UserError('There are no songs in that playlist.', 404)
+        return await stream_zip(request, files, name)
 
     async def library_delete(request):
         user = require_admin(request)
@@ -633,6 +630,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/queue', add_to_queue),
         web.post('/api/queue/pause-all', pause_all),
         web.post('/api/queue/clear-done', clear_done),
+        web.post('/api/queue/retry-failed', retry_failed),
         web.post('/api/queue/{id}/pause', queue_action(queue.pause)),
         web.post('/api/queue/{id}/resume', queue_action(queue.resume)),
         web.post('/api/queue/{id}/cancel', queue_action(queue.cancel)),
@@ -647,6 +645,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.get('/api/library', library_playlists),
         web.get('/api/library/songs', library_songs),
         web.get('/api/library/file', library_file),
+        web.get('/api/library/zip', library_zip),
         web.delete('/api/library/song', library_delete),
         web.delete('/api/library/playlist', library_delete_playlist),
         web.post('/api/library/sync', library_sync),
@@ -698,6 +697,35 @@ def clean_name(raw, path, default=None):
     if path and not name.lower().endswith(path.suffix.lower()):
         name += path.suffix
     return name
+
+
+async def stream_zip(request, files, zip_name):
+    """Sends [(name in the zip, path)] as one zip, written as it goes: nothing is kept on disk
+    and the browser sees it start at once, however big it is."""
+    zip_name = clean_name(zip_name, None, default='songs') + '.zip'
+    resp = web.StreamResponse(headers={
+        'Content-Type': 'application/zip',
+        'Content-Disposition': f"attachment; filename*=UTF-8''{quote(zip_name)}",
+        'Cache-Control': 'no-store',
+    })
+    await resp.prepare(request)
+    sink = _Sink()
+    with zipfile.ZipFile(sink, 'w', zipfile.ZIP_STORED) as zf:   # audio doesn't compress
+        for name, path in files:
+            try:
+                info = zipfile.ZipInfo.from_file(path, name)
+                src = path.open('rb')
+            except OSError:   # gone since the list was made (deleted, say)
+                continue
+            info.compress_type = zipfile.ZIP_STORED
+            with src, zf.open(info, 'w', force_zip64=True) as dst:
+                while chunk := src.read(ZIP_CHUNK):
+                    dst.write(chunk)
+                    await sink.drain(resp)
+            await sink.drain(resp)
+    await sink.drain(resp)
+    await resp.write_eof()
+    return resp
 
 
 class _Sink:

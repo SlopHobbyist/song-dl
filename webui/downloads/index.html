@@ -76,8 +76,12 @@
           <span class="stat-value" data-count="queued">0</span>
         </div>
         <div class="stat">
-          <span class="stat-label">Paused or failed</span>
-          <span class="stat-value" data-count="stopped">0</span>
+          <span class="stat-label">Paused</span>
+          <span class="stat-value" data-count="paused">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Failed</span>
+          <span class="stat-value" data-count="failed">0</span>
         </div>
         <div class="stat">
           <span class="stat-label">Done today</span>
@@ -96,9 +100,11 @@
           <div class="segmented" role="group" aria-label="Filter by status" id="status-filter">
             <button class="button" type="button" aria-pressed="true" data-filter="all">All</button>
             <button class="button" type="button" aria-pressed="false" data-filter="active">Active</button>
-            <button class="button" type="button" aria-pressed="false" data-filter="stopped">Paused / failed</button>
+            <button class="button" type="button" aria-pressed="false" data-filter="paused" title="Paused or cancelled">Paused</button>
+            <button class="button" type="button" aria-pressed="false" data-filter="failed">Failed</button>
             <button class="button" type="button" aria-pressed="false" data-filter="done">Done</button>
           </div>
+          <button class="button button-outlined button-sm" type="button" data-action="retry-failed" hidden><span class="icon icon-sm" aria-hidden="true">refresh</span> Retry all failed</button>
           <span class="spacer"></span>
           <div class="search search-sm">
             <span class="icon icon-sm" aria-hidden="true">search</span>

@@ -1720,12 +1720,21 @@
       var label = 'Save a list of the songs of ' + escapeHtml(name) + ' that weren\'t found';
       var menu = 'missing-' + escapeHtml(imp.id);
       var base = '/api/imports/' + encodeURIComponent(imp.id) + '/missing.';
+      /* Not found: the songs the summary counts as not found. Lossy only: found, but only
+         on SoundCloud or YouTube, to look for in better quality some other way. */
+      var group = function (title, n, query) {
+        return '<div class="menu-label">' + title + ' · ' + count(n) + '</div>' +
+          '<a class="menu-item" role="menuitem" href="' + base + 'txt' + query + '" download><span class="icon icon-sm">description</span> Text file (.txt)</a>' +
+          '<a class="menu-item" role="menuitem" href="' + base + 'csv' + query + '" download><span class="icon icon-sm">table_view</span> Spreadsheet (.csv)</a>';
+      };
+      var lossyTitle = 'Only on ' + imp.sources.filter(function (s) { return s !== 'Soulseek'; }).join(' or ');
       html += '<div class="menu-anchor">' +
         '<button class="button button-icon button-icon-sm" type="button" data-menu="' + menu + '" aria-label="' + label + '" title="' + label + '">' +
           '<span class="icon icon-sm">playlist_remove</span></button>' +
         '<div class="menu menu-end" id="' + menu + '" role="menu" data-open="false">' +
-          '<a class="menu-item" role="menuitem" href="' + base + 'txt" download><span class="icon icon-sm">description</span> Text file (.txt)</a>' +
-          '<a class="menu-item" role="menuitem" href="' + base + 'csv" download><span class="icon icon-sm">table_view</span> Spreadsheet (.csv)</a>' +
+          (imp.missing ? group('Not found', imp.missing, '') : '') +
+          (imp.missing && imp.elsewhere ? '<hr class="menu-divider">' : '') +
+          (imp.elsewhere ? group(escapeHtml(lossyTitle), imp.elsewhere, '?lossy=1') : '') +
         '</div></div>';
     }
     if (imp.state === 'done' || imp.state === 'cancelled') {
@@ -1764,7 +1773,7 @@
     setText($('[data-where]', el), lookedFor(imp.formats, imp.sources) + (imp.dj ? ' · DJ' : '') + ' · ' +
       serverRoot + imp.folder + ' · by ' + imp.by);
 
-    var signature = imp.state + '|' + imp.missing + '|' + imp.queued + '|' + imp.found;
+    var signature = imp.state + '|' + imp.missing + '|' + imp.elsewhere + '|' + imp.queued + '|' + imp.found;
     if (el.getAttribute('data-signature') !== signature) {
       el.setAttribute('data-signature', signature);
       $('[data-tag]', el).innerHTML = IMPORT_TAG[imp.state] || '';
@@ -1787,7 +1796,9 @@
     setText($('.progress-value', el), pct + '%');
 
     var parts = [count(searched) + ' of ' + count(imp.total) + ' searched',
-      count(imp.found) + ' found', count(imp.missing) + ' not found'];
+      count(imp.found) + ' found' + (imp.elsewhere ? ' (' + count(imp.elsewhere) + ' only on ' +
+        imp.sources.filter(function (s) { return s !== 'Soulseek'; }).join(' or ') + ')' : ''),
+      count(imp.missing) + ' not found'];
     if (imp.queued) parts.push(count(imp.queued) + ' queued');
     if (imp.skipped) parts.push(imp.skipped + ' row' + (imp.skipped === 1 ? '' : 's') + ' without a song name skipped');
     if (imp.state === 'running') parts.push(formatEta(imp.eta));
@@ -1994,11 +2005,12 @@
 
   /* ---------------------------------------------------- Downloads page */
 
-  var STOPPED = ['paused', 'cancelled', 'failed'];
+  /* Cancelled songs sit with the paused ones: both were stopped by hand and resume the same way */
   var FILTERS = {
     all: function () { return true; },
     active: function (s) { return s === 'downloading' || s === 'queued'; },
-    stopped: function (s) { return STOPPED.indexOf(s) > -1; },
+    paused: function (s) { return s === 'paused' || s === 'cancelled'; },
+    failed: function (s) { return s === 'failed'; },
     done: function (s) { return s === 'done'; }
   };
 
@@ -2018,13 +2030,13 @@
       var term = (search.value || '').trim().toLowerCase();
       var rows = $$('tr', tbody);
       var visible = 0;
-      var counts = { downloading: 0, queued: 0, stopped: 0, done: 0 };
+      var counts = { downloading: 0, queued: 0, paused: 0, failed: 0, done: 0 };
       var midnight = new Date().setHours(0, 0, 0, 0);
       var doneBytes = 0;
       rows.forEach(function (row) {
         var status = row.getAttribute('data-status');
-        if (STOPPED.indexOf(status) > -1) {
-          counts.stopped++;
+        if (status === 'cancelled') {
+          counts.paused++;
         } else if (status !== 'done') {
           counts[status]++;
         } else if (+row.getAttribute('data-finished') >= midnight) {
@@ -2042,6 +2054,7 @@
       setText($('[data-bind="speed"]'), formatSpeed(speed));
       setText($('[data-bind="done-size"]'), doneBytes ? formatSize(doneBytes) : '0 MB');
       $('#queue-empty').hidden = visible > 0;
+      $('[data-action="retry-failed"]').hidden = !(filter === 'failed' && counts.failed);
       setText($('#queue-summary'), visible + ' of ' + rows.length + ' items');
     }
 
@@ -2105,6 +2118,15 @@
       try {
         var res = await api('POST', '/api/queue/pause-all');
         toast(res.paused ? 'Paused everything' : 'Nothing to pause');
+        await load();
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
+    });
+    $('[data-action="retry-failed"]').addEventListener('click', async function () {
+      try {
+        var res = await api('POST', '/api/queue/retry-failed');
+        toast(res.retried ? 'Trying ' + count(res.retried) + ' failed song' + (res.retried === 1 ? '' : 's') + ' again' : 'Nothing to retry');
         await load();
       } catch (e) {
         toast(e.message, 'danger');
@@ -2182,6 +2204,7 @@
     var pendingDelete = null;
     var pendingPlaylist = null;
     var counts = {};   /* playlist name -> its songs, for the delete dialog */
+    var panels = 0;    /* panels made so far, for their menus' ids */
     var total = 0;
 
     function query(name, path) {
@@ -2236,6 +2259,7 @@
     }
 
     function buildPanel(playlist) {
+      var menuId = 'library-download-' + (++panels);
       var panel = document.createElement('details');
       panel.className = 'panel';
       panel.setAttribute('data-name', playlist.name);
@@ -2249,6 +2273,16 @@
           '<button class="button button-outlined button-sm" type="button" data-action="sync-playlist" data-sync-part hidden' +
             ' aria-label="Sync ' + escapeHtml(playlist.name) + '" title="Download the songs added to it since">' +
             '<span class="icon icon-sm">sync</span> Sync playlist</button>' +
+          '<div class="menu-anchor" data-download-part>' +
+            '<button class="button button-outlined button-sm" type="button" data-menu="' + menuId + '"' +
+              ' aria-label="Download ' + escapeHtml(playlist.name) + '" title="Download this playlist">' +
+              '<span class="icon icon-sm">download</span> Download</button>' +
+            '<div class="menu menu-end" id="' + menuId + '" role="menu" data-open="false">' +
+              '<button class="menu-item" type="button" role="menuitem" data-action="download-zip">' +
+                '<span class="icon icon-sm">folder_zip</span> Zip file</button>' +
+              '<button class="menu-item" type="button" role="menuitem" data-action="download-files">' +
+                '<span class="icon icon-sm">library_music</span> Separate files</button>' +
+            '</div></div>' +
           '<button class="button button-outlined button-sm button-danger" type="button" data-action="delete-playlist"' +
             ' aria-label="Delete ' + escapeHtml(playlist.name) + '" title="Delete this playlist and its songs">' +
             '<span class="icon icon-sm">delete</span> Delete playlist</button>' +
@@ -2289,6 +2323,34 @@
       }
     }
 
+    /* Saves each song of the playlist as its own file, one every half second so the browser
+       keeps up. Leaving the page stops it. */
+    async function downloadFiles(panel) {
+      var name = panel.getAttribute('data-name');
+      var button = $('[data-download-part] > button', panel);
+      if (isBusy(button)) return;
+      setBusy(button, 'Downloading');
+      try {
+        var songs = (await api('GET', '/api/library/songs' + query(name))).songs;
+        if (!songs.length) {
+          toast('There are no songs in ' + name + '.', 'warning');
+          return;
+        }
+        toast('Downloading the ' + count(songs.length) + ' songs of ' + name + '. If your browser asks, allow ' +
+          'this site to download multiple files.', 'success');
+        announce('Downloading ' + name);
+        for (var i = 0; i < songs.length; i++) {
+          if (i) await sleep(500);
+          setBusy(button, 'Downloading ' + (i + 1) + ' of ' + songs.length);
+          saveFile('/api/library/file' + query(name, songs[i].path));
+        }
+      } catch (e) {
+        toast(e.message, 'danger');
+      } finally {
+        setIdle(button);
+      }
+    }
+
     function filter() {
       var term = (search.value || '').trim().toLowerCase();
       var shown = 0;
@@ -2315,10 +2377,13 @@
         setText($('[data-bind="songs"]', panel), songsCaption(playlist));
         counts[playlist.name] = playlist.songs;
         showSync(panel, playlist.link);
+        $('[data-download-part]', panel).hidden = !playlist.songs;
         var at = list.children[index];
         if (at !== panel) list.insertBefore(panel, at || null);
       });
       Object.keys(existing).forEach(function (name) { existing[name].remove(); });
+      /* Wires up new panels' Download menus; the kit finds a menu by id, so only once it's in the page */
+      if (window.UI && UI.init) UI.init(list);
       total = data.playlists.length;
       filter();
     }
@@ -2326,6 +2391,18 @@
     search.addEventListener('input', filter);
 
     list.addEventListener('click', function (event) {
+      var zip = event.target.closest('[data-action="download-zip"]');
+      if (zip) {
+        var zipName = zip.closest('.panel').getAttribute('data-name');
+        saveFile('/api/library/zip' + query(zipName));
+        toast('Downloading ' + zipName + ' as a zip file', 'success');
+        return;
+      }
+      var files = event.target.closest('[data-action="download-files"]');
+      if (files) {
+        downloadFiles(files.closest('.panel'));
+        return;
+      }
       var sync = event.target.closest('[data-action="sync-playlist"]');
       if (sync) {
         syncPlaylist(sync.closest('.panel'), sync);

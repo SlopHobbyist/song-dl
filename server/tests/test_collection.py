@@ -1,6 +1,8 @@
 """The Library page's API: playlists saved on the server, their songs, downloading and deleting them."""
 
+import io
 import wave
+import zipfile
 
 from tests.conftest import ADMIN, start_site
 
@@ -155,5 +157,29 @@ async def test_a_playlist_still_downloading_is_not_deleted(tmp_path, fake):
         res = await client.delete('/api/library/playlist', params={'playlist': 'Mix'})
         assert res.status == 200
         assert not (tmp_path / 'music' / 'Mix').exists()
+    finally:
+        await client.close()
+
+
+async def test_a_playlist_is_downloaded_as_a_zip(tmp_path, fake):
+    client = await start_site(tmp_path, fake, server_dir=tmp_path / 'music')
+    try:
+        make_wav(tmp_path / 'music' / 'Mix' / 'Justice - Genesis.wav')
+        make_wav(tmp_path / 'music' / 'Mix' / 'disc 2' / 'Daft Punk - Digital Love.wav')
+        make_wav(tmp_path / 'music' / 'Other' / 'Secret - Song.wav')
+        (tmp_path / 'music' / 'Mix' / 'Secret.wav').symlink_to(tmp_path / 'music' / 'Other' / 'Secret - Song.wav')
+        (tmp_path / 'music' / 'Empty').mkdir()
+        assert (await client.get('/api/library/zip', params={'playlist': 'Mix'})).status == 401
+        await login(client)
+
+        res = await client.get('/api/library/zip', params={'playlist': 'Mix'})
+        assert res.status == 200 and "filename*=UTF-8''Mix.zip" in res.headers['Content-Disposition']
+        zf = zipfile.ZipFile(io.BytesIO(await res.read()))
+        # Sub-folders kept; the symlink out of the playlist left out
+        assert zf.namelist() == ['disc 2/Daft Punk - Digital Love.wav', 'Justice - Genesis.wav']
+        assert zf.read('Justice - Genesis.wav') == (tmp_path / 'music' / 'Mix' / 'Justice - Genesis.wav').read_bytes()
+
+        assert (await client.get('/api/library/zip', params={'playlist': 'Empty'})).status == 404
+        assert (await client.get('/api/library/zip', params={'playlist': '../music'})).status == 404
     finally:
         await client.close()

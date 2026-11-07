@@ -213,6 +213,16 @@ async def test_an_import_queues_songs_soulseek_doesnt_have_from_youtube(admin, y
 
     imp = await wait_for(view, lambda v: v['state'] == 'done')
     assert (imp['found'], imp['missing'], imp['queued'], imp['sources']) == (2, 0, 2, ['Soulseek', 'YouTube'])
+    # Found on YouTube isn't "not found": it has a list of its own
+    assert imp['elsewhere'] == 1
+    res = await admin.get(f'/api/imports/{iid}/missing.txt')
+    assert (await res.text()) == ''
+    res = await admin.get(f'/api/imports/{iid}/missing.csv', params={'lossy': '1'})
+    assert 'lossy%20only.csv' in res.headers['Content-Disposition']
+    rows = (await res.text()).lstrip('\ufeff').splitlines()
+    assert rows == ['Track Name,Artist Name(s),Album Name,Duration (ms),Found on', 'Never Heard,Nobody,,,YouTube']
+    res = await admin.get(f'/api/imports/{iid}/missing.txt', params={'lossy': '1'})
+    assert (await res.text()).splitlines() == ['Nobody - Never Heard']
     items = (await wait_for(lambda: queue_view(admin),
                             lambda v: len(v['items']) == 2 and all(i['status'] == 'done' for i in v['items'])))['items']
     assert sorted(i['format'] for i in items) == ['FLAC', 'Opus']
