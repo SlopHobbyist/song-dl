@@ -329,7 +329,8 @@ class Engine:
             text = f'Couldn\'t download it from {where}' + (f': {reason}' if reason else '')
             if 'try again' not in reason:
                 text = text.rstrip('.') + '. Please try again later.'
-            raise UserError(text)
+            # 503: the server couldn't reach it, or it wanted proof we're not a bot; that passes
+            raise UserError(text, 503 if re.search(r'couldn\'t reach|a bot', reason, re.I) else 502)
         raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
                         if len(cands) > 1 else
                         'Couldn\'t get the file from the uploader. Please try again later, or search again.')

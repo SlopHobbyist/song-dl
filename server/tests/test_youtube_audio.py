@@ -401,3 +401,43 @@ def test_network_trouble_is_named():
     from songdl import soundcloud_audio
     assert soundcloud_audio.download_error(DNS) == 'The server couldn\'t reach SoundCloud'
     assert youtube_audio.download_error(Exception('Read timed out')) == 'The server couldn\'t reach YouTube'
+
+
+async def test_a_song_that_wont_download_is_looked_for_further(admin, yt, fake):
+    # Every Soulseek uploader refuses (a captcha nobody answers), so WAV fails, then FLAC, then YouTube has it
+    fake.captchas = {'alice': 'x', 'bob': 'x'}
+    yt.results = [video('eeeeeeeeeee', 'Digital Love', 'Daft Punk - Topic', 301)]
+    res = await admin.post('/api/imports', json={
+        'csv': 'title,artist\nDigital Love,Daft Punk\n', 'name': 'mix', 'formats': ['wav', 'flac'],
+        'sources': ['soulseek', 'youtube'], 'folder': 'Mix'})
+    iid = (await res.json())['id']
+
+    async def view():
+        return next(i for i in (await _json(admin.get('/api/imports')))['imports'] if i['id'] == iid)
+
+    imp = await wait_for(view, lambda v: v['saved'] == 1, timeout=60)
+    assert (imp['state'], imp['found'], imp['missing'], imp['failed'], imp['elsewhere']) == ('done', 1, 0, 0, 1)
+    # The versions that wouldn't download made way for the one that did
+    items = (await queue_view(admin))['items']
+    assert [(i['source'], i['status']) for i in items] == [('youtube', 'done')]
+
+
+async def test_a_song_that_wont_download_from_anywhere_is_not_found(admin, fake):
+    fake.captchas = {'alice': 'x', 'bob': 'x'}
+    res = await admin.post('/api/imports', json={
+        'csv': 'title,artist\nDigital Love,Daft Punk\n', 'name': 'mix', 'formats': ['wav', 'flac'], 'folder': 'Mix'})
+    iid = (await res.json())['id']
+
+    async def view():
+        return next(i for i in (await _json(admin.get('/api/imports')))['imports'] if i['id'] == iid)
+
+    imp = await wait_for(view, lambda v: v['state'] == 'done' and v['missing'] == 1, timeout=60)
+    assert imp['failed'] == 1
+    # The last try stays in the queue, saying why
+    items = (await queue_view(admin))['items']
+    assert [(i['format'], i['status']) for i in items] == [('FLAC', 'failed')]
+    # Retried by hand once the uploader lets us, it counts
+    fake.captchas = {}
+    assert (await admin.post(f'/api/queue/{items[0]["id"]}/resume')).status == 200
+    imp = await wait_for(view, lambda v: v['saved'] == 1, timeout=30)
+    assert (imp['found'], imp['missing'], imp['failed']) == (1, 0, 0)

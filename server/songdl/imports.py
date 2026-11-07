@@ -56,13 +56,16 @@ class TryLater(Exception):
 
 
 class ImportTrack:
-    __slots__ = ('track', 'state', 'found', 'note', 'tries', 'searched')
+    __slots__ = ('track', 'state', 'found', 'note', 'item', 'failed', 'saved', 'tries', 'searched')
 
-    def __init__(self, track: Track, state='pending', found=(), note=''):
+    def __init__(self, track: Track, state='pending', found=(), note='', item=None, failed=(), saved=False):
         self.track = track
         self.state = state
         self.found = list(found)   # the format (or 'soundcloud' / 'youtube') queued; at most one
         self.note = note
+        self.item = item           # the id of the server queue item downloading it
+        self.failed = list(failed)  # formats and sources it was found in, but wouldn't download from
+        self.saved = saved         # its download finished
         # Not saved: the searches that failed, and the formats and sources already searched
         # without finding it, so a search tried again later doesn't repeat them
         self.tries = 0
@@ -70,14 +73,16 @@ class ImportTrack:
 
     def to_list(self):
         t = self.track
-        return [t.title, t.artist, t.album, t.duration, self.state, self.found, self.note]
+        return [t.title, t.artist, t.album, t.duration, self.state, self.found, self.note,
+                self.item, self.failed, self.saved]
 
     @classmethod
     def from_list(cls, row):
-        title, artist, album, duration, state, found, note = row
+        title, artist, album, duration, state, found, note = row[:7]
+        item, failed, saved = (list(row[7:10]) + [None, (), False][len(row) - 7:])[:3]
         if state == 'searching':
             state = 'pending'
-        return cls(Track(title, artist, album, duration), state, found, note)
+        return cls(Track(title, artist, album, duration), state, found, note, item, failed or (), bool(saved))
 
 
 class Import:
@@ -99,6 +104,16 @@ class Import:
         # This run's pace, for the time left
         self.run_started = None
         self.run_done = 0
+
+    def steps(self):
+        """Where a song is looked for, in order: each format on Soulseek, SoundCloud, YouTube."""
+        return [s for source in self.sources for s in (self.formats if source == 'soulseek' else [source])]
+
+    def steps_left(self, t: ImportTrack):
+        """The steps after the last one the song was found in but wouldn't download from."""
+        steps = self.steps()
+        last = max((steps.index(s) for s in t.failed if s in steps), default=-1)
+        return steps[last + 1:]
 
     def counts(self):
         c = {'pending': 0, 'searching': 0, 'found': 0, 'missing': 0}
@@ -127,7 +142,25 @@ class Import:
             per_song = tries * SEARCHES_PER_SONG * SEARCH_WINDOW / SEARCHES_PER_WINDOW
         return round(left * per_song)
 
-    def view(self):
+    def downloads(self, queue: ServerQueue):
+        """How the downloads of the songs it found are going."""
+        c = {'saved': 0, 'failed': 0, 'waiting': 0, 'paused': 0}
+        for t in self.tracks:
+            if t.saved:
+                c['saved'] += 1
+                continue
+            item = queue.items.get(t.item) if t.item else None
+            if not item:
+                continue
+            if item.status == 'failed':
+                c['failed'] += 1
+            elif item.status in ('paused', 'cancelled'):
+                c['paused'] += 1
+            elif item.status in ('queued', 'downloading'):
+                c['waiting'] += 1
+        return c
+
+    def view(self, queue: ServerQueue):
         c = self.counts()
         left = c['pending'] + c['searching']
         return {
@@ -145,7 +178,8 @@ class Import:
             'missing': c['missing'],
             'left': left,
             'skipped': self.skipped,
-            'queued': sum(len(t.found) for t in self.tracks),
+            'queued': sum(t.state == 'found' for t in self.tracks),
+            **self.downloads(queue),
             # Found, but not on Soulseek: their own list (not_found(lossy=True))
             'elsewhere': len(self.not_found(lossy=True)),
             'current': [t.track.label for t in self.tracks if t.state == 'searching'][:WORKERS],
@@ -210,6 +244,9 @@ class Importer:
         self.dirty = False
         self.saved_text = None
         self.offline_until = 0
+        self.links = {}            # queue item id -> (Import, ImportTrack) it downloads
+        self.failures = []         # ids of queue items that failed, to look further for their songs
+        queue.watchers.append(self._watch)
 
     # Adding and controlling
 
@@ -234,25 +271,41 @@ class Importer:
             raise UserError('That import no longer exists.', 404)
         return imp
 
+    def _items(self, imp, statuses):
+        """The queue items of its songs that are in one of the statuses."""
+        items = (self.queue.items.get(t.item) for t in imp.tracks if t.item)
+        return [i for i in items if i and i.status in statuses]
+
     def pause(self, imp):
+        """Stops searching, and holds back the songs it found that haven't started downloading,
+        so other songs in the queue go first. The ones downloading finish."""
         if imp.state == 'running':
             imp.state, imp.note = 'paused', ''
             self._interrupt(imp)
+            for item in self._items(imp, ('queued',)):
+                self.queue.pause(item)
             self._changed()
 
     def resume(self, imp):
         if imp.state in ('paused', 'cancelled'):
             imp.state, imp.note, imp.finished, imp.next = 'running', '', None, 0
             imp.run_started, imp.run_done = None, 0
+            for item in self._items(imp, ('paused', 'cancelled')):
+                self.queue.resume(item)
             self._changed()
 
     def retry_missing(self, imp):
-        """Searches again for the songs a finished import didn't find."""
+        """Searches again for the songs a finished import didn't find, everywhere, including where
+        they were found before but wouldn't download."""
         if imp.state != 'done':
             return
         missing = [t for t in imp.tracks if t.state == 'missing']
         for t in missing:
-            t.state, t.note, t.tries = 'pending', '', 0
+            item = self.queue.items.get(t.item) if t.item else None
+            if item and item.status == 'failed':
+                self.queue.delete(item)   # the new search queues it afresh
+            self._unlink(t)
+            t.state, t.note, t.tries, t.found, t.failed = 'pending', '', 0, [], []
             t.searched.clear()
         if missing:
             imp.state, imp.note, imp.finished, imp.next = 'running', '', None, 0
@@ -261,17 +314,25 @@ class Importer:
             self._changed()
 
     def cancel(self, imp):
+        """Stops searching, and cancels the downloads that haven't started (Restart brings them back)."""
         if imp.state in ('running', 'paused'):
             imp.state, imp.note = 'cancelled', ''
             imp.finished = int(time.time() * 1000)
             self._interrupt(imp)
+            for item in self._items(imp, ('queued', 'paused')):
+                self.queue.cancel(item)
             self._changed()
 
     def delete(self, imp):
         """Forgets the import. Songs it already queued stay in the queue."""
         self._interrupt(imp)
-        self.imports.pop(imp.id, None)
+        self._forget(imp)
         self._changed()
+
+    def _forget(self, imp):
+        self.imports.pop(imp.id, None)
+        for t in imp.tracks:
+            self._unlink(t)
 
     def _interrupt(self, imp):
         for task in list(self.tasks.get(imp.id, ())):
@@ -284,10 +345,70 @@ class Importer:
     def _trim(self):
         ended = [i for i in self.imports.values() if i.state in ('done', 'cancelled')]
         for imp in ended[:max(0, len(self.imports) - MAX_IMPORTS)]:
-            del self.imports[imp.id]
+            self._forget(imp)
 
     def view(self):
-        return {'imports': [i.view() for i in reversed(self.imports.values())]}
+        return {'imports': [i.view(self.queue) for i in reversed(self.imports.values())]}
+
+    # Following the downloads of the songs it found
+
+    def _link(self, imp, t, item):
+        self._unlink(t)
+        t.item = item.id
+        self.links[item.id] = (imp, t)
+        self._watch(item)
+
+    def _unlink(self, t):
+        if t.item and self.links.get(t.item, (None, None))[1] is t:
+            del self.links[t.item]
+        t.item = None
+
+    def _watch(self, item):
+        """Told by the queue when an item finishes or fails."""
+        imp, t = self.links.get(item.id, (None, None))
+        if not t:
+            return
+        if item.status == 'done':
+            if not t.saved or t.state != 'found':
+                t.saved = True
+                if t.state == 'missing':   # (its download was retried by hand, and worked)
+                    t.state, t.note = 'found', ''
+                self._changed()
+        elif item.status == 'failed' and item.gone and t.state == 'found':
+            self.failures.append(item.id)
+            self._changed()
+
+    def _fall_back(self):
+        """Looks further for the songs whose download failed for good: from the next format or
+        source after the one it was found in. A song with none left is not found."""
+        failures, self.failures = self.failures, []
+        for item_id in failures:
+            imp, t = self.links.get(item_id, (None, None))
+            item = self.queue.items.get(item_id)
+            if not t or not item or item.status != 'failed' or t.state != 'found':
+                continue
+            step = t.found[0] if t.found else None
+            if step and step not in t.failed:
+                t.failed.append(step)
+            left = imp.steps_left(t)
+            where = SOURCE_LABELS.get(step) or (step or '').upper()
+            if not left:
+                # The failed item stays in the queue, saying why; retrying it there still counts here
+                t.state, t.note = 'missing', f'Found ({where}), but it wouldn\'t download'
+                log.info('import %r: %r wouldn\'t download, and there\'s nowhere left to look',
+                         imp.name, t.track.label)
+            else:
+                log.info('import %r: %r wouldn\'t download from %s; looking in %s', imp.name, t.track.label,
+                         where, ', '.join(left))
+                self._unlink(t)
+                self.queue.delete(item)   # another version takes its place
+                t.state, t.note, t.found, t.tries = 'pending', '', [], 0
+                t.searched.clear()
+                imp.next = 0
+                if imp.state == 'done':
+                    imp.state, imp.finished = 'running', None
+                    imp.run_started, imp.run_done = None, 0
+            self.dirty = True
 
     def _changed(self):
         self.dirty = True
@@ -313,6 +434,8 @@ class Importer:
         return sum(len(tasks) for tasks in self.tasks.values())
 
     async def _dispatch(self):
+        if self.failures:
+            self._fall_back()
         for imp in self.imports.values():
             if imp.state == 'running' and not any(t.state in ('pending', 'searching') for t in imp.tracks):
                 imp.state, imp.finished = 'done', int(time.time() * 1000)
@@ -353,15 +476,17 @@ class Importer:
 
     async def _search(self, imp: Import, t: ImportTrack):
         try:
-            if not t.found and not self._local(imp, t):
+            passed = set(imp.steps()) - set(imp.steps_left(t))
+            # (After a download failed, a copy on the server is no better than that one was)
+            if not t.found and not t.failed and not self._local(imp, t):
                 return
             for source in imp.sources:
                 if t.found:   # (an import saved by an older version may have one already)
                     break
-                if source in t.searched:
+                if source in t.searched or source in passed:
                     continue
                 if source == 'soulseek':
-                    ok = await self._soulseek(imp, t)
+                    ok = await self._soulseek(imp, t, passed)
                 else:
                     ok = await self._elsewhere(imp, t, source)
                 if not ok:
@@ -400,11 +525,11 @@ class Importer:
         log.info('import search for %r in %s failed for good: %s', t.track.label, step, e)
         t.searched.add(step)
 
-    async def _soulseek(self, imp: Import, t: ImportTrack):
+    async def _soulseek(self, imp: Import, t: ImportTrack, passed=()):
         """Queues the song from Soulseek in the first of the formats it has. False when the import
         had to stop."""
         for fmt in imp.formats:
-            if fmt in t.searched:
+            if fmt in t.searched or fmt in passed:
                 continue
             try:
                 cands = await self.engine.find_track(t.track, fmt, priority=IMPORT)
@@ -413,12 +538,13 @@ class Importer:
                 continue
             entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
             try:
-                self.queue.add([entry], imp.folder, imp.by, imp.dj)
+                item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
             except UserError as e:
                 # The queue is full, say: stop until someone makes room
                 self._pause(imp, t, e)
                 return False
             t.found.append(fmt)
+            self._link(imp, t, item)
             return True
         return True
 
@@ -433,11 +559,12 @@ class Importer:
         step = c.fmt if c.fmt in imp.formats and c.origin not in matching.ELSEWHERE else c.origin
         entry = Entry(cands, c.fmt, t.track.title, t.track.artist, t.track.album)
         try:
-            self.queue.add([entry], imp.folder, imp.by, imp.dj)
+            item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
         except UserError as e:
             self._pause(imp, t, e)
             return False
         t.found.append(step)
+        self._link(imp, t, item)
         return True
 
     def _pause(self, imp, t, e):
@@ -459,11 +586,12 @@ class Importer:
             return True
         entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album)
         try:
-            self.queue.add([entry], imp.folder, imp.by, imp.dj)
+            item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
         except UserError as e:
             self._pause(imp, t, e)
             return False
         t.found.append(source)
+        self._link(imp, t, item)
         return True
 
     def _retry_later(self, imp, t):
@@ -488,9 +616,36 @@ class Importer:
                 log.warning('skipped a saved import: %r', e)
                 continue
             self.imports[imp.id] = imp
+        self._link_all()
         running = sum(i.state == 'running' for i in self.imports.values())
         if self.imports:
             log.info('loaded %d playlist import(s), %d running', len(self.imports), running)
+
+    def _link_all(self):
+        """Links each song found to its queue item. Imports saved before songs remembered their
+        item are matched by folder and song; the songs of a paused or cancelled one that are
+        still waiting to download are held back, as pause() does now."""
+        by_song = {(i.folder, i.title, i.artist, i.dj, i.by): i for i in self.queue.items.values()}
+        held = 0
+        for imp in self.imports.values():
+            for t in imp.tracks:
+                if t.item:
+                    item = self.queue.items.get(t.item)
+                    if item:
+                        self._link(imp, t, item)
+                    continue
+                if t.state != 'found':
+                    continue
+                item = by_song.get((imp.folder, t.track.title, t.track.artist, imp.dj, imp.by))
+                if not item:
+                    continue
+                self._link(imp, t, item)
+                if imp.state in ('paused', 'cancelled') and item.status == 'queued':
+                    self.queue.pause(item)
+                    held += 1
+                self.dirty = True
+        if held:
+            log.info('held back %d queued song(s) of paused imports', held)
 
     def save(self):
         if not self.dirty:

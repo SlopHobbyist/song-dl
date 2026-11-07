@@ -149,3 +149,53 @@ def test_time_left_uses_the_search_limit_until_it_has_a_pace():
     assert imp.eta(10) == round(expected)
     imp.run_started, imp.run_done = time.monotonic() - 100, 10
     assert imp.eta(10) == 100
+
+
+async def test_an_import_says_how_its_downloads_went(admin):
+    iid = await start_import(admin)
+    view = await wait_for(lambda: import_view(admin, iid), lambda v: v['saved'] == 2, timeout=30)
+    assert (view['found'], view['waiting'], view['failed'], view['paused']) == (2, 0, 0, 0)
+
+
+async def test_pausing_an_import_holds_back_its_waiting_downloads(admin, monkeypatch):
+    monkeypatch.setattr('songdl.server_queue.SLOTS', 0)   # nothing starts downloading
+    iid = await start_import(admin)
+    view = await wait_for(lambda: import_view(admin, iid), lambda v: v['state'] == 'done')
+    assert view['waiting'] == 2
+    importer = admin.server.app[IMPORTER]
+    imp = importer.get(iid)
+    imp.state = 'running'   # (done imports can't be paused; one still searching can)
+    importer.pause(imp)
+    assert {i['status'] for i in (await queue_view(admin))['items']} == {'paused'}
+    view = await import_view(admin, iid)
+    assert (view['waiting'], view['paused']) == (0, 2)
+    importer.cancel(imp)
+    assert {i['status'] for i in (await queue_view(admin))['items']} == {'cancelled'}
+    importer.resume(imp)   # Restart
+    assert {i['status'] for i in (await queue_view(admin))['items']} == {'queued'}
+
+
+async def test_imports_saved_before_links_find_their_downloads(admin, monkeypatch):
+    monkeypatch.setattr('songdl.server_queue.SLOTS', 0)
+    iid = await start_import(admin)
+    await wait_for(lambda: import_view(admin, iid), lambda v: v['state'] == 'done')
+    importer = admin.server.app[IMPORTER]
+    imp = importer.get(iid)
+    imp.state = 'paused'
+    # As an older version saved it: no queue item ids
+    importer.dirty = True
+    importer.save()
+    text = admin.cfg.imports_file.read_text()
+    import json
+    data = json.loads(text)
+    for d in data['imports']:
+        d['tracks'] = [row[:7] for row in d['tracks']]
+    admin.cfg.imports_file.write_text(json.dumps(data))
+
+    again = Importer(admin.cfg, admin.engine, admin.queue)
+    again.load()
+    back = again.get(iid)
+    assert sum(bool(t.item) for t in back.tracks) == 2
+    # Paused, so its songs waiting to download are held back too
+    assert {i.status for i in admin.queue.items.values()} == {'paused'}
+    assert back.view(admin.queue)['paused'] == 2

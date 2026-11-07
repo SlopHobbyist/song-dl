@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -92,6 +93,9 @@ class QueueItem:
         self.note = ''
         self.created = int(time.time() * 1000)
         self.finished = None
+        # Failed because no copy of it would download (the uploaders didn't send it, say), not
+        # because Soulseek or the network was away: worth looking for another version
+        self.gone = False
 
     @property
     def label(self):
@@ -125,6 +129,7 @@ class QueueItem:
             'id': self.id, 'title': self.title, 'artist': self.artist, 'album': self.album,
             'format': self.format, 'folder': self.folder, 'by': self.by, 'status': self.status, 'dj': self.dj,
             'size': self.size, 'note': self.note, 'created': self.created, 'finished': self.finished,
+            'gone': self.gone,
             # A finished song never needs its copies again
             'cands': [] if self.status == 'done' else [c.to_dict() for c in self.cands[:KEPT_COPIES]],
         }
@@ -135,6 +140,7 @@ class QueueItem:
                    d.get('album') or '', d['format'], d['folder'], d['by'], bool(d.get('dj')))
         item.status, item.size, item.note = d['status'], d.get('size'), d.get('note') or ''
         item.created, item.finished = d['created'], d.get('finished')
+        item.gone = d['gone'] if 'gone' in d else item.status == 'failed' and gone_note(item.note)
         if item.status == 'done':
             item.progress = 1.0
         return item
@@ -149,30 +155,41 @@ class ServerQueue:
         self.wake = asyncio.Event()
         self.dirty = False
         self.saved_text = None
+        self.watchers = []   # called with each item that finishes or fails (imports.py)
 
     # Adding and controlling
 
     def add(self, entries, folder, by, dj=False):
         """Queues the entries (jobs.Entry) for the folder, as CDJ copies with `dj`. Returns
         (queued, skipped)."""
+        items, queued = self._add(entries, folder, by, dj)
+        return queued, len(items) - queued
+
+    def add_one(self, entry, folder, by, dj=False):
+        """Queues one entry and returns its QueueItem: a new one, or the one already on its way
+        for the same song."""
+        return self._add([entry], folder, by, dj)[0][0]
+
+    def _add(self, entries, folder, by, dj):
         folder = normalize_folder(folder)
         self.dest_dir(folder)   # refuses anything that would leave the downloads folder
         if len(self.items) + len(entries) > MAX_ITEMS:
             raise UserError('The queue is full. Clear some finished songs first.', 409)
-        busy = {(i.label.lower(), i.format, i.folder, i.dj) for i in self.items.values() if i.status != 'done'}
-        queued = skipped = 0
+        busy = {(i.label.lower(), i.format, i.folder, i.dj): i for i in self.items.values() if i.status != 'done'}
+        items, queued = [], 0
         for entry in entries:
             item = QueueItem(uuid.uuid4().hex, list(entry.cands[:KEPT_COPIES]), entry.title, entry.artist,
                              entry.album, entry.fmt, folder, by, dj)
             key = (item.label.lower(), item.format, folder, dj)
             if key in busy:
-                skipped += 1
+                items.append(busy[key])
                 continue
-            busy.add(key)
+            busy[key] = item
             self.items[item.id] = item
+            items.append(item)
             queued += 1
         self._changed()
-        return queued, skipped
+        return items, queued
 
     def get(self, item_id):
         item = self.items.get(item_id)
@@ -187,6 +204,7 @@ class ServerQueue:
     def resume(self, item):
         if item.status in RESTARTABLE:
             item.status, item.progress, item.speed, item.note, item.finished = 'queued', 0.0, None, '', None
+            item.gone = False
             self._changed()
 
     def cancel(self, item):
@@ -344,7 +362,11 @@ class ServerQueue:
                 return
             if self.engine.low_disk():
                 raise UserError(LOW_DISK)
-            fetch = await self.engine.download(item.cands, update)
+            try:
+                fetch = await self.engine.download(item.cands, update)
+            except UserError as e:
+                self._fail(item, str(e), gone=e.status != 503)
+                return
             if item.dj:
                 name, label = await self._save_dj(item, fetch, dest, stem, update)
                 note = f'Saved as {name} ({label})'
@@ -389,12 +411,21 @@ class ServerQueue:
         item.status, item.progress, item.speed, item.note = 'done', 1.0, None, note
         item.finished = int(time.time() * 1000)
         self._changed()
+        self._tell(item)
 
-    def _fail(self, item, note):
-        item.status, item.speed, item.note = 'failed', None, note
+    def _fail(self, item, note, gone=False):
+        item.status, item.speed, item.note, item.gone = 'failed', None, note, gone
         item.finished = int(time.time() * 1000)
         log.info('%s: %s', item.label, note)
         self._changed()
+        self._tell(item)
+
+    def _tell(self, item):
+        for watcher in self.watchers:
+            try:
+                watcher(item)
+            except Exception:
+                log.exception('queue watcher failed on %r', item.label)
 
     # Remembering the queue, so it survives a restart
 
@@ -448,6 +479,15 @@ class ServerQueue:
     def shutdown(self):
         self.dirty = True
         self.save()
+
+
+def gone_note(note):
+    """Whether a failed item's note (from before items said so themselves) means no copy of
+    it would download, rather than Soulseek or the network being away."""
+    note = note or ''
+    if note.startswith('Couldn\'t get the file from'):
+        return True
+    return note.startswith('Couldn\'t download it from') and not re.search(r'couldn\'t reach|a bot', note, re.I)
 
 
 def _existing(folder: Path, stem, exts):

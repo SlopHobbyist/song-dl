@@ -1800,7 +1800,11 @@
       count(imp.found) + ' found' + (imp.elsewhere ? ' (' + count(imp.elsewhere) + ' only on ' +
         imp.sources.filter(function (s) { return s !== 'Soulseek'; }).join(' or ') + ')' : ''),
       count(imp.missing) + ' not found'];
-    if (imp.queued) parts.push(count(imp.queued) + ' queued');
+    /* How the downloads of the songs it found are going: found isn't saved yet */
+    if (imp.saved) parts.push(count(imp.saved) + ' saved');
+    if (imp.waiting) parts.push(count(imp.waiting) + ' waiting to download');
+    if (imp.paused) parts.push(count(imp.paused) + ' downloads paused');
+    if (imp.failed) parts.push(count(imp.failed) + ' failed to download');
     if (imp.skipped) parts.push(imp.skipped + ' row' + (imp.skipped === 1 ? '' : 's') + ' without a song name skipped');
     if (imp.state === 'running') parts.push(formatEta(imp.eta));
     setText($('[data-summary]', el), parts.filter(Boolean).join(' · '));

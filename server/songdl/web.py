@@ -493,7 +493,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         imp = importer.add(name, formats, folder, user, tracks, skipped, sources, dj)
         if 'playlist' in data and data.get('link'):
             await playlist_links.remember(imp.folder, data['link'], name, tracks, formats, sources, dj)
-        return web.json_response(imp.view())
+        return web.json_response(imp.view(queue))
 
     async def list_imports(request):
         require_admin(request)

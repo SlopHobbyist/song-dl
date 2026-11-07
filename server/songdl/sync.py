@@ -182,4 +182,4 @@ class Syncer:
         log.info('%s synced %r with %s: %d songs there, %d new, %d already here', by, folder.name, link.service,
                  len(tracks), len(added), len(added) - len(fresh))
         return {'total': len(tracks), 'added': len(added), 'already': len(added) - len(fresh),
-                'queued': len(fresh), 'import': imp.view() if imp else None, 'link': self.links.view(folder.name)}
+                'queued': len(fresh), 'import': imp.view(self.importer.queue) if imp else None, 'link': self.links.view(folder.name)}
