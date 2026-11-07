@@ -56,15 +56,40 @@
 <main id="main" tabindex="-1" class="page-body">
   <section class="section">
     <div class="container">
-      <h1 class="text-display-3">Library</h1>
-      <div class="empty-state mt-6">
+      <div class="row justify-between">
+        <h1 class="text-display-3">Library</h1>
+        <div class="search search-sm">
+          <span class="icon icon-sm" aria-hidden="true">search</span>
+          <input type="search" placeholder="Filter playlists" aria-label="Filter playlists" id="library-search">
+        </div>
+      </div>
+
+      <p class="text-body-2 text-muted mt-2" id="library-summary" role="status"></p>
+
+      <div class="panel-group library-list mt-4" id="library-list"></div>
+
+      <div class="empty-state mt-6" id="library-empty" hidden>
         <span class="icon" aria-hidden="true">library_music</span>
-        <p class="text-heading-3">Coming soon</p>
-        <p class="text-body-2 text-muted">The songs saved on the server will be listed here.</p>
+        <p class="text-heading-3">No playlists yet</p>
+        <p class="text-body-2 text-muted">Playlists saved to the server show up here.</p>
       </div>
     </div>
   </section>
 </main>
+
+<dialog class="dialog dialog-sm" id="dlg-delete" aria-labelledby="dlg-delete-title" aria-describedby="dlg-delete-body">
+  <div class="dialog-header">
+    <span class="icon text-danger" aria-hidden="true">delete</span>
+    <h2 class="dialog-title" id="dlg-delete-title">Delete this song?</h2>
+  </div>
+  <div class="dialog-body" id="dlg-delete-body">
+    <strong id="dlg-delete-name">This song</strong> will be deleted from the server.
+  </div>
+  <div class="dialog-actions">
+    <button class="button button-text" type="button" data-dialog-close="cancel">Cancel</button>
+    <button class="button button-filled button-danger" type="button" data-dialog-close="delete">Delete</button>
+  </div>
+</dialog>
 
 <footer class="site-footer">
   <!-- TODO: point at the real repository -->

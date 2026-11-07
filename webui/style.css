@@ -237,6 +237,17 @@ main:focus { outline: none; }
 
 .table-toolbar { flex-wrap: wrap; }
 
+/* ------------------------------------------------------------ Library */
+.library-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.library-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-list .panel-content { color: var(--color-on-surface); }
+/* A long playlist scrolls inside its panel, with the header row kept in view */
+.library-scroll { max-height: 70vh; overflow-y: auto; }
+.library-table thead th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }
+.library-table .col-format  { width: 96px; }
+.library-table .col-bitrate { width: 120px; }
+.library-table .col-actions { width: 1%; }
+
 /* ------------------------------------------------------------ Login */
 .auth-page { display: grid; place-items: center; }
 .auth-card-flat { box-shadow: none; }
@@ -257,6 +268,9 @@ main:focus { outline: none; }
 
 /* ------------------------------------------------------------ Small */
 @media (max-width: 720px) {
+  /* A playlist's songs scroll with the page: a scroll box inside a phone's screen is a trap */
+  .library-scroll { max-height: none; overflow: visible; }
+  .library-table thead th { position: static; }
   /* "SoundCloud" is the widest tag here; downloads show just the percentage */
   .col-scan-status { width: 120px; }
   .col-scan-status, .cell-status { padding-inline: var(--space-3); }

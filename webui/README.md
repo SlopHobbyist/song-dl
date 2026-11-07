@@ -42,7 +42,12 @@ Shows all things queued and downloading currently, and the playlist imports.
 Can cancel resume and delete.
 
 ## Library
-`/library/`, for admins logged in. A placeholder for now.
+`/library/`, for admins logged in.
+- A list of the playlists saved on the server: every folder in `<server folder>/`, except the folder visitors'
+  downloads go in (and Song-DL's own data folders)
+- Each shows its song count and size; a filter box narrows the list by name
+- Clicking one drops it open and lists its songs: title and artist, format, bitrate (bit depth, sample rate,
+  length and size on hover), a download button and a delete button (asks first, then deletes the file from the server)
 
 ## Design
 Uses the vendored `web-design-wavefront`.

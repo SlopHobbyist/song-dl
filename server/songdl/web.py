@@ -3,7 +3,7 @@ finished downloads.
 
 Public: the home page, searching, reading a playlist link into a CSV, scanning
 a playlist, and fetching files to the browser. Behind the admin login: the
-Server and All pages, the queue API and playlist imports.
+Downloads and Library pages, the queue API, playlist imports and the saved playlists.
 """
 
 import asyncio
@@ -20,6 +20,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from . import dj, imports, jobs, links, matching, playlist, turnstile, youtube
+from .collection import Collection
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
@@ -154,6 +155,7 @@ def content_security_policy(cfg):
 def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
     importer = imports.Importer(cfg, manager.engine, queue)
+    collection = Collection(cfg, manager.engine.library)
     zips = {}   # token -> (time made, [download job ids], name)
     readers = links.Readers()
     auth = Auth(cfg.admins)
@@ -519,6 +521,30 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         return web.Response(text=text, content_type=mime, headers={
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name)}"})
 
+    # The Library page: the playlists saved on the server (admins only)
+
+    async def library_playlists(request):
+        require_admin(request)
+        return web.json_response({'playlists': await collection.playlists()})
+
+    async def library_songs(request):
+        require_admin(request)
+        return web.json_response({'songs': await collection.songs(request.query.get('playlist'))})
+
+    async def library_file(request):
+        require_admin(request)
+        path = collection.file(request.query.get('playlist'), request.query.get('path'))
+        return web.FileResponse(path, headers={
+            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(clean_name(None, path))}",
+        })
+
+    async def library_delete(request):
+        user = require_admin(request)
+        name, rel = request.query.get('playlist'), request.query.get('path')
+        await collection.delete(name, rel)
+        log.info('%s deleted %r from the playlist %r', user, rel, name)
+        return web.json_response({'ok': True})
+
     async def health(request):
         try:
             state = await manager.engine.slskd.server_state()
@@ -578,6 +604,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.post('/api/imports/{id}/resume', import_action(importer.resume)),
         web.post('/api/imports/{id}/cancel', import_action(importer.cancel)),
         web.delete('/api/imports/{id}', import_action(importer.delete)),
+        web.get('/api/library', library_playlists),
+        web.get('/api/library/songs', library_songs),
+        web.get('/api/library/file', library_file),
+        web.delete('/api/library/song', library_delete),
         web.get('/api/health', health),
         web.get('/files/{folder}/{name}', serve_file),
         web.get('/', page),

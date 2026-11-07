@@ -2118,6 +2118,170 @@
     poll(load, 1500);
   }
 
+  /* ------------------------------------------------------ Library page
+     One panel per playlist saved on the server (each folder in the server
+     folder, but not the visitors' downloads folder). Opening a panel loads
+     its songs: title and artist, format, bitrate, and buttons to download or
+     delete each one. */
+
+  function bitrateText(song) {
+    return song.bitrate ? Number(song.bitrate).toLocaleString() + ' kbps' : '—';
+  }
+
+  function streamText(song) {
+    var parts = [];
+    if (song.bitDepth) parts.push(song.bitDepth + '-bit');
+    if (song.sampleRate) parts.push(+(song.sampleRate / 1000).toFixed(1) + ' kHz');
+    if (song.length) parts.push(formatDuration(song.length));
+    if (song.size) parts.push(formatSize(song.size));
+    return parts.join(' · ');
+  }
+
+  function songsCaption(playlist) {
+    var n = playlist.songs;
+    return n + ' song' + (n === 1 ? '' : 's') + (playlist.size ? ' · ' + formatSize(playlist.size) : '');
+  }
+
+  function initLibrary() {
+    if (page !== 'library') return;
+    var list = $('#library-list');
+    var search = $('#library-search');
+    var dialog = $('#dlg-delete');
+    var pendingDelete = null;
+    var total = 0;
+
+    function query(name, path) {
+      return '?playlist=' + encodeURIComponent(name) + (path === undefined ? '' : '&path=' + encodeURIComponent(path));
+    }
+
+    function songRow(name, song) {
+      var label = (song.artist ? song.artist + ' - ' : '') + song.title;
+      var detail = streamText(song);
+      var tags = song.format + ' · ' + bitrateText(song);
+      return '<tr data-path="' + escapeHtml(song.path) + '">' +
+        '<td><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(song.title) + '</span>' +
+          '<span class="text-caption text-muted">' + escapeHtml(song.artist || 'Unknown artist') + (song.dj ? ' · DJ' : '') + '</span>' +
+          '<span class="text-caption text-muted show-sm-only">' + escapeHtml(tags) + '</span></div></td>' +
+        '<td class="hide-sm">' + escapeHtml(song.format) + '</td>' +
+        '<td class="table-numeric hide-sm"' + (detail ? ' title="' + escapeHtml(detail) + '"' : '') + '>' + escapeHtml(bitrateText(song)) + '</td>' +
+        '<td class="row-actions">' +
+          '<a class="button button-icon button-icon-sm" href="/api/library/file' + escapeHtml(query(name, song.path)) + '" download' +
+            ' aria-label="Download ' + escapeHtml(label) + '" title="Download"><span class="icon icon-sm">download</span></a>' +
+          '<button class="button button-icon button-icon-sm" type="button" data-action="delete-song"' +
+            ' aria-label="Delete ' + escapeHtml(label) + '" title="Delete"><span class="icon icon-sm">delete</span></button>' +
+        '</td></tr>';
+    }
+
+    function showSongs(panel, songs) {
+      var name = panel.getAttribute('data-name');
+      var body = $('.panel-content', panel);
+      if (!songs.length) {
+        body.innerHTML = '<p class="text-body-2 text-muted">No songs in this playlist.</p>';
+        return;
+      }
+      body.innerHTML = '<div class="library-scroll">' +
+        '<table class="table table-hover library-table">' +
+        '<caption class="visually-hidden">Songs in ' + escapeHtml(name) + '</caption>' +
+        '<thead><tr><th scope="col">Song</th><th scope="col" class="hide-sm col-format">Format</th>' +
+        '<th scope="col" class="table-numeric hide-sm col-bitrate">Bitrate</th>' +
+        '<th scope="col" class="col-actions"><span class="visually-hidden">Actions</span></th></tr></thead>' +
+        '<tbody>' + songs.map(function (song) { return songRow(name, song); }).join('') + '</tbody></table></div>';
+    }
+
+    async function loadSongs(panel) {
+      var body = $('.panel-content', panel);
+      if (!body.children.length) {
+        body.innerHTML = '<div class="row text-muted"><span class="spinner spinner-sm" aria-hidden="true"></span> Loading songs…</div>';
+      }
+      try {
+        var data = await api('GET', '/api/library/songs' + query(panel.getAttribute('data-name')));
+        showSongs(panel, data.songs);
+      } catch (e) {
+        body.innerHTML = '<p class="text-body-2 text-danger">' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function buildPanel(playlist) {
+      var panel = document.createElement('details');
+      panel.className = 'panel';
+      panel.setAttribute('data-name', playlist.name);
+      panel.innerHTML = '<summary class="panel-summary">' +
+        '<span class="icon text-muted" aria-hidden="true">queue_music</span>' +
+        '<span class="library-title"><span class="library-name">' + escapeHtml(playlist.name) + '</span>' +
+        '<span class="text-caption text-muted" data-bind="songs"></span></span></summary>' +
+        '<div class="panel-content"></div>';
+      panel.addEventListener('toggle', function () { if (panel.open) loadSongs(panel); });
+      return panel;
+    }
+
+    function filter() {
+      var term = (search.value || '').trim().toLowerCase();
+      var shown = 0;
+      $$('.panel', list).forEach(function (panel) {
+        var show = !term || panel.getAttribute('data-name').toLowerCase().indexOf(term) > -1;
+        panel.hidden = !show;
+        if (show) shown++;
+      });
+      list.hidden = !shown;
+      $('#library-empty').hidden = total > 0;
+      setText($('#library-summary'), !total ? '' : term
+        ? shown + ' of ' + total + ' playlists'
+        : total + ' playlist' + (total === 1 ? '' : 's'));
+    }
+
+    /* Makes the list exactly these playlists, keeping open panels open. */
+    async function loadPlaylists() {
+      var data = await api('GET', '/api/library');
+      var existing = {};
+      $$('.panel', list).forEach(function (panel) { existing[panel.getAttribute('data-name')] = panel; });
+      data.playlists.forEach(function (playlist, index) {
+        var panel = existing[playlist.name] || buildPanel(playlist);
+        delete existing[playlist.name];
+        setText($('[data-bind="songs"]', panel), songsCaption(playlist));
+        var at = list.children[index];
+        if (at !== panel) list.insertBefore(panel, at || null);
+      });
+      Object.keys(existing).forEach(function (name) { existing[name].remove(); });
+      total = data.playlists.length;
+      filter();
+    }
+
+    search.addEventListener('input', filter);
+
+    list.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-action="delete-song"]');
+      if (!button) return;
+      var row = button.closest('tr');
+      pendingDelete = { panel: button.closest('.panel'), row: row };
+      $('#dlg-delete-name').textContent = $('[data-name]', row).textContent;
+      UI.openDialog('dlg-delete');
+    });
+
+    dialog.addEventListener('close', async function () {
+      var target = pendingDelete;
+      pendingDelete = null;
+      if (dialog.returnValue !== 'delete' || !target) return;
+      var row = target.row, panel = target.panel;
+      var name = $('[data-name]', row).textContent;
+      var next = row.nextElementSibling || row.previousElementSibling;
+      var nextPath = next && next.getAttribute('data-path');
+      try {
+        await api('DELETE', '/api/library/song' + query(panel.getAttribute('data-name'), row.getAttribute('data-path')));
+        toast('Deleted "' + name + '"', 'success');
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
+      await loadSongs(panel);
+      try { await loadPlaylists(); } catch (e) {}
+      /* Keep the keyboard where it was: on the next song's delete button, else the playlist */
+      var again = nextPath && $$('tr', panel).filter(function (r) { return r.getAttribute('data-path') === nextPath; })[0];
+      var focus = again ? $('[data-action="delete-song"]', again) : $('.panel-summary', panel);
+      if (focus && focus.isConnected) focus.focus();
+    });
+
+    loadPlaylists().catch(function (e) { toast(e.message, 'danger'); });
+  }
+
   /* ------------------------------------------------------------ Login */
 
   function initLogin() {
@@ -2200,5 +2364,6 @@
   initImportButton();
   initImports();
   initAll();
+  initLibrary();
   initLogin();
 })();
