@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import dj, imports, jobs, links, matching, playlist, turnstile, youtube
+from . import dj, imports, jobs, links, matching, playlist, sync, turnstile, youtube
 from .collection import Collection
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
@@ -158,6 +158,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     collection = Collection(cfg, manager.engine.library)
     zips = {}   # token -> (time made, [download job ids], name)
     readers = links.Readers()
+    playlist_links = sync.Links(cfg)
+    syncer = sync.Syncer(playlist_links, collection, importer, readers)
     auth = Auth(cfg.admins)
     csp = content_security_policy(cfg)
     webui = cfg.webui_dir
@@ -454,6 +456,11 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         dj = data.get('dj') is True
         folder = queue.folder_for(data['playlist'], dj) if 'playlist' in data else data.get('folder')
         queued, skipped = queue.add(entries, folder, user, dj)
+        scan = manager.scans.get(str(data.get('scan') or ''))
+        if 'playlist' in data and data.get('link') and scan:
+            # A scanned playlist link saved to the server: Sync playlist can bring it up to date
+            await playlist_links.remember(normalize_folder(folder), data['link'], data['playlist'],
+                                          [t.track for t in scan.tracks], scan.formats, scan.sources, dj)
         log.info('%s queued %d song(s) in %r%s', user, queued, folder, ' for DJs' if dj else '')
         return web.json_response({'queued': queued, 'skipped': skipped, 'folder': normalize_folder(folder)})
 
@@ -480,9 +487,9 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     # Playlist imports (admins only)
 
     async def add_import(request):
-        """{csv, type, name, formats, folder or playlist, dj}: the whole playlist, searched in the
+        """{csv, type, name, formats, folder or playlist, dj, link}: the whole playlist, searched in the
         background. type 'text' means csv holds a plain text list, one song per line; dj saves
-        CDJ copies (dj.py)."""
+        CDJ copies (dj.py); link is the playlist link the CSV was read from, for Sync playlist."""
         user = require_admin(request)
         data = await read_json(request, MAX_IMPORT)
         text = data.get('csv')
@@ -499,6 +506,8 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         dj = data.get('dj') is True
         folder = queue.folder_for(data['playlist'], dj) if 'playlist' in data else data.get('folder')
         imp = importer.add(name, formats, folder, user, tracks, skipped, sources, dj)
+        if 'playlist' in data and data.get('link'):
+            await playlist_links.remember(imp.folder, data['link'], name, tracks, formats, sources, dj)
         return web.json_response(imp.view())
 
     async def list_imports(request):
@@ -525,7 +534,16 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
 
     async def library_playlists(request):
         require_admin(request)
-        return web.json_response({'playlists': await collection.playlists()})
+        playlists = await collection.playlists()
+        for p in playlists:
+            p['link'] = playlist_links.view(p['name'])
+        return web.json_response({'playlists': playlists})
+
+    async def library_sync(request):
+        """{playlist}: imports the songs added to the playlist on the service it came from."""
+        user = require_admin(request)
+        data = await read_json(request)
+        return web.json_response(await syncer.sync(data.get('playlist'), user))
 
     async def library_songs(request):
         require_admin(request)
@@ -608,6 +626,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.get('/api/library/songs', library_songs),
         web.get('/api/library/file', library_file),
         web.delete('/api/library/song', library_delete),
+        web.post('/api/library/sync', library_sync),
         web.get('/api/health', health),
         web.get('/files/{folder}/{name}', serve_file),
         web.get('/', page),
@@ -619,6 +638,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
             log.warning('webserver.admins is empty: the Server and All pages are turned off')
         queue.load()
         importer.load()
+        playlist_links.load()
         manager.engine.library.load()
         await manager.engine.slskd.start()
         tasks = [

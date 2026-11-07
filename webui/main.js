@@ -1038,9 +1038,13 @@
     return true;
   }
 
-  /* Saves results on the server (admins), in a folder named after the playlist. */
-  async function queueResults(ids, label, playlist) {
-    var res = await api('POST', '/api/queue', { playlist: playlist, results: ids, dj: djMode() });
+  /* Saves results on the server (admins), in a folder named after the playlist. A scan of a
+     playlist link sends the link too, so the Library can sync the playlist with it later. */
+  async function queueResults(ids, label, playlist, scan) {
+    var res = await api('POST', '/api/queue', {
+      playlist: playlist, results: ids, dj: djMode(),
+      link: scan && scan.link || undefined, scan: scan && scan.link ? scan.id : undefined
+    });
     if (res.queued) {
       toast('Saving ' + label + ' to ' + serverRoot + res.folder + '/. Follow along on Downloads.', 'success');
     } else {
@@ -1378,7 +1382,7 @@
           undefined, await file.arrayBuffer());
         if (run !== runs.scan) return;
         runs.scanJob = started.id;
-        scan = { id: started.id, job: null };
+        scan = { id: started.id, job: null, link: linked ? linked.url : null };
         var shown = false;
         for (;;) {
           var job = await api('GET', '/api/scan/' + started.id);
@@ -1556,7 +1560,7 @@
         } else if (action === 'queue-all') {
           if (scan.job.state === 'running' || !found.length) return;
           setBusy(target, 'Saving');
-          var res = await queueResults(resultIds(found), found.length + ' songs', playlistName(scan.job.name));
+          var res = await queueResults(resultIds(found), found.length + ' songs', playlistName(scan.job.name), scan);
           announce('Saving ' + res.queued + ' songs to the server');
         } else {
           var song = scan.job.tracks[+target.closest('tr').getAttribute('data-index')];
@@ -1581,7 +1585,7 @@
               target.title = target.getAttribute('aria-label');
             }
           } else {
-            ok = (await queueResults(ids, label, playlistName(scan.job.name))).queued > 0;
+            ok = (await queueResults(ids, label, playlistName(scan.job.name), scan)).queued > 0;
           }
           if (ok && action === 'download-row') {
             /* The browser may still have dropped the file (cancelled, failed),
@@ -1690,6 +1694,7 @@
           formats: formats,
           sources: chosenSources(),
           playlist: linked ? linked.name : playlistName(file.name),
+          link: linked ? linked.url : undefined,
           dj: djMode()
         });
         toast('Importing ' + count(imp.total) + ' songs into ' + serverRoot + imp.folder + '. Follow along on Downloads.', 'success');
@@ -2139,7 +2144,33 @@
 
   function songsCaption(playlist) {
     var n = playlist.songs;
-    return n + ' song' + (n === 1 ? '' : 's') + (playlist.size ? ' · ' + formatSize(playlist.size) : '');
+    return n + ' song' + (n === 1 ? '' : 's') + (playlist.size ? ' · ' + formatSize(playlist.size) : '') +
+      (playlist.link ? ' · ' + playlist.link.sourceName : '');
+  }
+
+  /* "just now", "5 minutes ago", "yesterday", or the date */
+  function timeAgo(ms) {
+    var minutes = Math.round((Date.now() - ms) / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return minutes + ' minute' + (minutes === 1 ? '' : 's') + ' ago';
+    var hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + ' hour' + (hours === 1 ? '' : 's') + ' ago';
+    var days = Math.round(hours / 24);
+    if (days === 1) return 'yesterday';
+    if (days < 7) return days + ' days ago';
+    return new Date(ms).toLocaleDateString();
+  }
+
+  /* What the sync bar says about a playlist added from a link */
+  function syncText(link) {
+    var what = link.kind === 'album' ? 'album' : 'playlist';
+    var text = 'From a ' + escapeHtml(link.sourceName) + ' ' + (/^https?:\/\//i.test(link.url)
+      ? '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer">' + what + '</a>'
+      : what);
+    if (link.synced) {
+      text += ' · Synced ' + timeAgo(link.synced) + (link.added ? ', ' + count(link.added) + ' new song' + (link.added === 1 ? '' : 's') : '');
+    }
+    return text;
   }
 
   function initLibrary() {
@@ -2174,7 +2205,7 @@
 
     function showSongs(panel, songs) {
       var name = panel.getAttribute('data-name');
-      var body = $('.panel-content', panel);
+      var body = $('[data-songs]', panel);
       if (!songs.length) {
         body.innerHTML = '<p class="text-body-2 text-muted">No songs in this playlist.</p>';
         return;
@@ -2189,7 +2220,7 @@
     }
 
     async function loadSongs(panel) {
-      var body = $('.panel-content', panel);
+      var body = $('[data-songs]', panel);
       if (!body.children.length) {
         body.innerHTML = '<div class="row text-muted"><span class="spinner spinner-sm" aria-hidden="true"></span> Loading songs…</div>';
       }
@@ -2209,9 +2240,48 @@
         '<span class="icon text-muted" aria-hidden="true">queue_music</span>' +
         '<span class="library-title"><span class="library-name">' + escapeHtml(playlist.name) + '</span>' +
         '<span class="text-caption text-muted" data-bind="songs"></span></span></summary>' +
-        '<div class="panel-content"></div>';
+        '<div class="panel-content"><div class="library-sync" data-sync-bar hidden>' +
+          '<span class="icon icon-sm text-muted" aria-hidden="true">link</span>' +
+          '<span class="text-caption text-muted grow" data-sync-text></span>' +
+          '<button class="button button-outlined button-sm" type="button" data-action="sync-playlist"' +
+            ' aria-label="Sync ' + escapeHtml(playlist.name) + '" title="Download the songs added to it since">' +
+            '<span class="icon icon-sm">sync</span> Sync playlist</button>' +
+        '</div><div data-songs></div></div>';
       panel.addEventListener('toggle', function () { if (panel.open) loadSongs(panel); });
       return panel;
+    }
+
+    /* A playlist added from a link shows where it's from, and a button that downloads the
+       songs added to it there since (only those: songs taken off it there stay here). */
+    function showSync(panel, link) {
+      var bar = $('[data-sync-bar]', panel);
+      bar.hidden = !link;
+      if (link) $('[data-sync-text]', bar).innerHTML = syncText(link);
+    }
+
+    async function syncPlaylist(panel, button) {
+      if (isBusy(button)) return;
+      var name = panel.getAttribute('data-name');
+      setBusy(button, 'Syncing');
+      announce('Syncing ' + name);
+      try {
+        var res = await api('POST', '/api/library/sync', { playlist: name });
+        var where = res.link ? res.link.sourceName : 'the link';
+        var news = count(res.added) + ' new song' + (res.added === 1 ? '' : 's') + ' on ' + where;
+        if (res.queued) {
+          toast(news + (res.already ? ' (' + count(res.already) + ' already here)' : '') + '. Downloading ' +
+            (res.queued === 1 ? 'it' : 'them') + ' into ' + name + '. Follow along on Downloads.', 'success');
+        } else if (res.added) {
+          toast(news + ', and ' + (res.added === 1 ? 'it\'s' : 'they\'re all') + ' in this playlist already.', 'success');
+        } else {
+          toast('No new songs on ' + where + '. ' + name + ' is up to date.', 'success');
+        }
+        if (res.link) showSync(panel, res.link);
+      } catch (e) {
+        toast(e.message, 'danger');
+      } finally {
+        setIdle(button);
+      }
     }
 
     function filter() {
@@ -2238,6 +2308,7 @@
         var panel = existing[playlist.name] || buildPanel(playlist);
         delete existing[playlist.name];
         setText($('[data-bind="songs"]', panel), songsCaption(playlist));
+        showSync(panel, playlist.link);
         var at = list.children[index];
         if (at !== panel) list.insertBefore(panel, at || null);
       });
@@ -2249,6 +2320,11 @@
     search.addEventListener('input', filter);
 
     list.addEventListener('click', function (event) {
+      var sync = event.target.closest('[data-action="sync-playlist"]');
+      if (sync) {
+        syncPlaylist(sync.closest('.panel'), sync);
+        return;
+      }
       var button = event.target.closest('[data-action="delete-song"]');
       if (!button) return;
       var row = button.closest('tr');

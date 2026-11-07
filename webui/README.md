@@ -48,6 +48,12 @@ Can cancel resume and delete.
 - Each shows its song count and size; a filter box narrows the list by name
 - Clicking one drops it open and lists its songs: title and artist, format, bitrate (bit depth, sample rate,
   length and size on hover), a download button and a delete button (asks first, then deletes the file from the server)
+- A playlist that was imported or saved to the server from a link (Spotify, YouTube and the other services) shows
+  where it's from and a **Sync playlist** button. It reads the link again and downloads only the songs added there
+  since, with the formats, sources and DJ mode the playlist was saved with (an import named "<playlist> (sync)" on
+  Downloads). Songs taken off the playlist there are left alone and not counted. A song is never fetched twice: the
+  songs a playlist has had are remembered for good (in `data/playlist-links.json`), new songs already in the folder
+  are skipped, and a playlist syncs once at a time
 
 ## Design
 Uses the vendored `web-design-wavefront`.

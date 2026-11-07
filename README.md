@@ -31,7 +31,7 @@ This is a website for downloading music. It grabs songs from the Soulseek networ
 | `/` | everyone | Search songs or playlists, download them (a playlist as a zip or separate files). Admins can also pick Separate files to Server in Download as: each song is saved on the server in a folder named after the playlist, and Import takes whole playlists (up to 10,000 songs) in the background |
 | `/login/` | admins | Sign in (Cloudflare Turnstile optional) |
 | `/downloads/` | admins | What's being saved on the server and playlist imports: pause, resume, cancel, delete |
-| `/library/` | admins | Placeholder for now |
+| `/library/` | admins | The playlists saved on the server and their songs: download or delete a song, and Sync playlist downloads the songs added to a linked playlist since it was saved |
 
 WebUI at `./webui/`
 Server at `./server/songdl/`

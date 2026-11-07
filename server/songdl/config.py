@@ -67,6 +67,10 @@ class Config:
     def imports_file(self):
         return self.data_dir / 'imports.json'
 
+    @property
+    def links_file(self):
+        return self.data_dir / 'playlist-links.json'
+
 
 def _path(value, base):
     # The example config can use Windows style paths like .\downloads
