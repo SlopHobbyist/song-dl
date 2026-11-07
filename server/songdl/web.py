@@ -346,6 +346,12 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         job = await manager.start_download(data.get('result'), client_ip(request), data.get('dj') is True)
         return web.json_response({'id': job.id})
 
+    async def skip_download(request):
+        job = manager.downloads.get(request.match_info['id'])
+        if job and job.state == 'running':
+            job.skip.request()
+        return web.json_response({'ok': True})
+
     async def poll_downloads(request):
         views = {}
         for jid in request.query.getall('id', [])[:MAX_FILES]:
@@ -553,6 +559,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.get('/api/scan/{id}', poll_scan),
         web.delete('/api/scan/{id}', cancel_scan),
         web.post('/api/download', start_download),
+        web.post('/api/download/{id}/skip', skip_download),
         web.get('/api/downloads', poll_downloads),
         web.post('/api/zip', make_zip),
         web.get('/api/zip/{token}', zip_files),

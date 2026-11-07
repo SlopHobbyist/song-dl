@@ -139,6 +139,18 @@ class SearchLimiter:
             heapq.heapify(self.waiting)
 
 
+class Skip:
+    """A visitor's request to give up on the copy being fetched and try the next one."""
+
+    def __init__(self):
+        self.event = asyncio.Event()
+        self.more = False    # whether there is a next copy to try
+
+    def request(self):
+        if self.more:
+            self.event.set()
+
+
 class Engine:
     def __init__(self, cfg, slskd: Slskd):
         self.cfg = cfg
@@ -270,10 +282,11 @@ class Engine:
 
     # Download
 
-    async def download(self, cands, update=None):
+    async def download(self, cands, update=None, skip=None):
         """Fetches the first copy that works and returns its Fetch (see
         fetch.path). `update(progress, speed, note)` is called as it goes;
-        progress is 0..1 or None. Raises UserError when no copy works."""
+        progress is 0..1 or None. `skip` (a Skip) lets the visitor give up on the
+        copy being fetched for the next one. Raises UserError when no copy works."""
         cands = cands[:MAX_ATTEMPTS]
         last = len(cands) - 1
         for i, cand in enumerate(cands):
@@ -283,12 +296,18 @@ class Engine:
                 fetch.observers += 1
                 cancel = None
                 try:
-                    if await self._watch(fetch, i == last, i, update):
+                    if skip:
+                        skip.more = i < last
+                    if await self._watch(fetch, i == last, i, update, skip):
                         return fetch
                 finally:
                     fetch.observers -= 1
                     if fetch.active and not fetch.observers:
                         cancel = self.spawn(self._cancel(fetch))
+                if skip and skip.event.is_set():
+                    skip.event.clear()
+                    log.info('visitor skipped the copy from %s', cand.username)
+                    break
                 # Uploaders with a captcha refuse or hold the file until it's answered; ask once more after that
                 if retried or fetch.observers or not await self._captcha_answered(fetch):
                     break
@@ -318,7 +337,7 @@ class Engine:
         """Whether we asked `user` for a file lately; only they may get a captcha answered."""
         return time.monotonic() - self.asked.get(user, float('-inf')) < ASKED_WINDOW
 
-    async def _watch(self, fetch: Fetch, is_last, attempt, update):
+    async def _watch(self, fetch: Fetch, is_last, attempt, update, skip=None):
         """Follows a fetch. Returns True once the file is ready, False when this copy is no good."""
         user = fetch.cand.username
         where = matching.SOURCE_LABELS[fetch.cand.source]
@@ -334,6 +353,8 @@ class Engine:
             phase = fetch.phase
             if phase == 'done':
                 return True
+            if skip and skip.more and skip.event.is_set():
+                return False
             if phase == 'failed':
                 log.info('copy from %s failed: %s', user, fetch.error)
                 return False

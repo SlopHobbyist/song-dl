@@ -911,6 +911,7 @@
           for (;;) {
             var res = await api('GET', '/api/downloads?id=' + encodeURIComponent(started.id));
             view = res.jobs[started.id];
+            if (view) view.id = started.id;
             views[i] = view;
             report();
             if (view.state !== 'running') break;
@@ -987,10 +988,25 @@
     setText($('.progress-value', el), pct === null ? '' : pct + '%');
     setText(note, summary.note || 'Starting');
     note.title = summary.note || '';
+    /* The skip button sits next to the bar in the song card only */
+    var skip = el.parentNode && $('[data-skip]', el.parentNode);
+    if (skip) {
+      var skippable = (summary.views || []).filter(function (v) { return v && v.state === 'running' && v.canSkip && v.id; });
+      skip.hidden = !skippable.length;
+      skip.onclick = function () {
+        skip.hidden = true;
+        skippable.forEach(function (v) {
+          api('POST', '/api/download/' + encodeURIComponent(v.id) + '/skip').catch(function () {});
+        });
+      };
+    }
   }
 
   function hideFetch(el) {
-    if (el) el.hidden = true;
+    if (!el) return;
+    el.hidden = true;
+    var skip = el.parentNode && $('[data-skip]', el.parentNode);
+    if (skip) skip.hidden = true;
   }
 
   /* Hands finished files to the browser: one by one, or as a single zip. */

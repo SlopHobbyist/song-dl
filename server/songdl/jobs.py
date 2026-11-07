@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from . import dj, library, matching
-from .engine import LOW_DISK, SCAN, UNREACHABLE, Engine, mb
+from .engine import LOW_DISK, SCAN, UNREACHABLE, Engine, Skip, mb
 from .errors import UserError
 from .playlist import Track
 from .slskd import SlskdError
@@ -245,6 +245,7 @@ class DownloadJob(Job):
         self.path = None
         self.polled = time.monotonic()
         self.task = None
+        self.skip = Skip()
 
     def seen(self):
         self.polled = self.updated = time.monotonic()
@@ -272,6 +273,7 @@ class DownloadJob(Job):
             'title': self.entry.title,
             'format': matching.LABELS[self.entry.fmt],
             'dj': self.dj_label,
+            'canSkip': self.state == 'running' and self.skip.more,
         }
 
 
@@ -473,7 +475,7 @@ class Manager:
             job.progress, job.speed, job.note = progress, speed, note
             job.entry.touch()
 
-        fetch = await self.engine.download(job.entry.cands, update)
+        fetch = await self.engine.download(job.entry.cands, update, job.skip)
         e = job.entry
         self.engine.library.add(fetch.path, e.title, e.artist, e.album, fetch.cand, e.query)
         stem = file_stem(e.title, e.artist)
