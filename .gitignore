@@ -3,6 +3,7 @@
 *.log
 old
 chat_examples
+review/
 
 # macOS
 .DS_Store
