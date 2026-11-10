@@ -402,3 +402,9 @@ async def test_retry_all_failed(admin):
     assert first.status in ('queued', 'downloading', 'done') and first.note != 'Couldn\'t get the file from the uploader.'
     assert second.status == 'done'
     assert (await (await admin.post('/api/queue/retry-failed')).json()) == {'retried': 0}
+
+
+async def test_a_search_can_be_stopped(site, fake):
+    # slskd refuses (415) a PUT without a JSON body, which is how a search that ran past
+    # SEARCH_MAX_SECONDS used to fail instead of giving what it had found
+    assert await site.engine.slskd.stop_search('any-id') == {}

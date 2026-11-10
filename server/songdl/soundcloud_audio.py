@@ -126,7 +126,7 @@ def _flat_track(entry):
     }
 
 
-def score(track, query, artist='', title='', duration=None, locked=False, min_kbps=0):
+def score(track, query, artist='', title='', duration=None, locked=False, min_kbps=0, artists=(), exact=False):
     """How likely a track is the song (see youtube_audio.score): a number or None, and whether
     its length disagrees with the playlist's. A track nobody may download scores None,
     unless `locked` asks how well it would have."""
@@ -139,7 +139,7 @@ def score(track, query, artist='', title='', duration=None, locked=False, min_kb
         channel = f'{channel} {track["credited"]}'   # who SoundCloud says it's by counts as much as who posted it
     entry = {'id': track['id'], 'title': track['title'], 'channel': channel, 'duration': track['duration'],
              'view_count': track['plays']}
-    points, outlier = youtube_audio.score(entry, query, artist, title, duration)
+    points, outlier = youtube_audio.score(entry, query, artist, title, duration, artists, exact)
     if points is None:
         return None, False
     asked = _words(query) | _words(title)
@@ -168,6 +168,7 @@ def candidate(track, meta, outlier=False):
         bit_depth=None, sample_rate=None, free_slot=True, queue=0, speed=0, fmt=fmt,
         bitrate=kbps, source='soundcloud', url=track['url'])
     c.outlier = outlier
+    c.fit = 'longer' if outlier else ''
     c.meta = dict(meta)
     return c
 
@@ -220,7 +221,7 @@ class SoundCloudAudio:
     async def _run(self, func, *args, timeout=SEARCH_TIMEOUT):
         return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout)
 
-    async def find(self, query, artist='', title='', duration=None, video=None, more=False):
+    async def find(self, query, artist='', title='', duration=None, video=None, more=False, artists=(), exact=False):
         """The tracks that are the song, best first; [] when SoundCloud has none. `more`
         says another place (YouTube) will be tried next, so a poor copy is left to it."""
         async with self.searches:
@@ -233,15 +234,19 @@ class SoundCloudAudio:
         if not duration:
             # The label's own upload is usually under DRM, but it still says how long the song is
             locked = [(points, t['full']) for t in tracks if not t['stream'] and t['full']
-                      for points in [score({**t, 'duration': t['full']}, query, artist, title, locked=True)[0]]
+                      for points in [score({**t, 'duration': t['full']}, query, artist, title, locked=True,
+                                           artists=artists)[0]]
                       if points is not None]
             if locked:
                 duration = max(locked)[1]
+        everyone = tuple(a for a in (artists or (artist,)) if a)
         scored = []
         for t in tracks:
-            points, outlier = score(t, query, artist, title, duration, min_kbps=MIN_KBPS if more else 0)
-            # So many SoundCloud uploads are someone's edit that one the wrong length is left to YouTube
-            if points is not None and not outlier:
+            points, outlier = score(t, query, artist, title, duration, min_kbps=MIN_KBPS if more else 0,
+                                    artists=artists, exact=exact)
+            # So many SoundCloud uploads are someone's edit that one the wrong length is left to
+            # YouTube, unless it's known whose song it is: then it is the artist's own longer version
+            if points is not None and (not outlier or everyone):
                 scored.append((points, outlier, t))
         scored.sort(key=lambda s: (not s[1], s[0]), reverse=True)
         log.info('soundcloud search %r: %d of %d tracks might be the song', query, len(scored), len(tracks))

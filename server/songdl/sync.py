@@ -38,10 +38,7 @@ def _title_words(title):
     return library.core_words(title) or library.words(title)
 
 
-def song_key(title, artist):
-    """Which song a playlist entry is, however the service spells it this time:
-    "Daft Punk - Digital Love (feat. X) - Remastered" and "daft punk - Digital Love" are one."""
-    return ' '.join(sorted(library.words(artist))) + '|' + ' '.join(sorted(_title_words(title)))
+song_key = library.song_key   # which song a playlist entry is, however the service spells it this time
 
 
 def _same_song(track: Track, song):
@@ -155,6 +152,7 @@ class Syncer:
         tracks = []
         if any(r.get('Track Name') for r in found.rows):
             tracks, _ = playlist.parse(found.csv().encode('utf-8'), limit=10 ** 9)
+            matching.mark_versions(tracks)   # over the whole playlist, before the new songs are picked out
 
         known = set(rec.get('known') or [])
         added, seen = [], set()

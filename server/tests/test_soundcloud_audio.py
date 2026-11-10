@@ -208,7 +208,7 @@ async def test_no_reason_isnt_said_twice(site, sc):
 
 async def test_a_scan_tries_soundcloud_then_youtube(site, sc, yt):
     sc.items = [item(4, 'Nobody - Never Heard', 'Nobody Fan', seconds=240)]
-    csv = ('title,artist,duration\nDigital Love,Daft Punk,301\nNever Heard,Nobody,240\n'
+    csv = ('title,artist,duration\nDigital Love,Daft Punk,200\nNever Heard,Nobody,240\n'
            'Some Other,Nobody,200\n').encode()
     res = await site.post('/api/scan', params={'formats': 'flac', 'sources': ','.join(ALL), 'name': 't.csv'}, data=csv)
     assert res.status == 200, await res.text()
@@ -261,7 +261,7 @@ async def test_soulseek_can_come_after_soundcloud(site, sc, yt):
 
 
 async def test_a_scan_tries_sources_in_the_order_given(site, sc, yt):
-    csv = 'title,artist,duration\nDigital Love,Daft Punk,301\nNever Heard,Nobody,240\n'.encode()
+    csv = 'title,artist,duration\nDigital Love,Daft Punk,200\nNever Heard,Nobody,240\n'.encode()
     res = await site.post('/api/scan', params={'formats': 'flac', 'sources': 'soundcloud,soulseek', 'name': 't.csv'},
                           data=csv)
     assert res.status == 200, await res.text()

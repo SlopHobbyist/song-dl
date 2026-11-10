@@ -251,13 +251,19 @@ def make_app(fake: Fake):
             fake.whitelisted.add(user)
         return web.Response(status=201)
 
+    async def stop_search(request):
+        # Like slskd: a PUT that doesn't say it's JSON isn't read
+        if request.content_type != 'application/json':
+            return web.Response(status=415, text='Unsupported Media Type')
+        return web.json_response({})
+
     app = web.Application()
     base = '/api/v0'
     app.add_routes([
         web.get(f'{base}/server', server),
         web.post(f'{base}/searches', start_search),
         web.get(f'{base}/searches/{{id}}', get_search),
-        web.put(f'{base}/searches/{{id}}', ok),
+        web.put(f'{base}/searches/{{id}}', stop_search),
         web.delete(f'{base}/searches/{{id}}', ok),
         web.get(f'{base}/searches/{{id}}/responses', search_responses),
         web.post(f'{base}/transfers/downloads/batches', enqueue),

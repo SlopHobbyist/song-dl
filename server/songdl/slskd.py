@@ -71,7 +71,8 @@ class Slskd:
         return await self.request('GET', f'/searches/{search_id}')
 
     async def stop_search(self, search_id):
-        return await self.request('PUT', f'/searches/{search_id}')
+        # (slskd answers 415 Unsupported Media Type to a PUT that doesn't say it's JSON)
+        return await self.request('PUT', f'/searches/{search_id}', {})
 
     async def search_responses(self, search_id):
         return await self.request('GET', f'/searches/{search_id}/responses')

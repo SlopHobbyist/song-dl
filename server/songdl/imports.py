@@ -36,7 +36,7 @@ from .errors import UserError
 from .jobs import Entry
 from .matching import SOURCE_LABELS, more_after
 from .playlist import Track
-from .server_queue import ServerQueue, normalize_folder
+from .server_queue import STOPPABLE, ServerQueue, normalize_folder
 from .slskd import SlskdError
 
 log = logging.getLogger('songdl')
@@ -74,15 +74,17 @@ class ImportTrack:
     def to_list(self):
         t = self.track
         return [t.title, t.artist, t.album, t.duration, self.state, self.found, self.note,
-                self.item, self.failed, self.saved]
+                self.item, self.failed, self.saved, list(t.artists)]
 
     @classmethod
     def from_list(cls, row):
         title, artist, album, duration, state, found, note = row[:7]
         item, failed, saved = (list(row[7:10]) + [None, (), False][len(row) - 7:])[:3]
+        artists = tuple(row[10]) if len(row) > 10 and row[10] else ()   # (imports from before they were kept have none)
         if state == 'searching':
             state = 'pending'
-        return cls(Track(title, artist, album, duration), state, found, note, item, failed or (), bool(saved))
+        return cls(Track(title, artist, album, duration, artists=artists), state, found, note, item, failed or (),
+                   bool(saved))
 
 
 class Import:
@@ -144,12 +146,13 @@ class Import:
 
     def downloads(self, queue: ServerQueue):
         """How the downloads of the songs it found are going."""
-        c = {'saved': 0, 'failed': 0, 'waiting': 0, 'paused': 0}
+        c = {'saved': 0, 'failed': 0, 'waiting': 0, 'paused': 0, 'check': 0}
         for t in self.tracks:
+            item = queue.items.get(t.item) if t.item else None
             if t.saved:
                 c['saved'] += 1
+                c['check'] += bool(item and item.check)   # saved, but worth a listen (a longer version)
                 continue
-            item = queue.items.get(t.item) if t.item else None
             if not item:
                 continue
             if item.status == 'failed':
@@ -228,6 +231,7 @@ class Import:
         imp = cls(d['name'], d['formats'], d['folder'], d['by'],
                   [ImportTrack.from_list(r) for r in d['tracks']], d.get('skipped', 0),
                   d.get('sources') or ('soulseek',), bool(d.get('dj')))
+        matching.mark_versions([t.track for t in imp.tracks])
         imp.id, imp.state, imp.note = d['id'], d['state'], d.get('note') or ''
         imp.created, imp.finished = d['created'], d.get('finished')
         return imp
@@ -257,6 +261,7 @@ class Importer:
             raise UserError(f'That playlist has {len(tracks)} songs. An import can have up to {MAX_TRACKS}.')
         if sum(i.state in ('running', 'paused') for i in self.imports.values()) >= MAX_IMPORTS:
             raise UserError('There are too many imports going. Let some finish or delete them first.', 409)
+        matching.mark_versions(tracks)
         imp = Import(name, formats, folder, by, [ImportTrack(t) for t in tracks], skipped, sources, dj)
         self.imports[imp.id] = imp
         self._trim()
@@ -312,6 +317,45 @@ class Importer:
             imp.run_started, imp.run_done = None, 0
             log.info('import %r: searching again for %d song(s)', imp.name, len(missing))
             self._changed()
+
+    def search_again(self, folder, title, artist, album, by, formats, sources, dj):
+        """Looks again for a song an admin called wrong in the Library (the wrong copy is
+        blocked by then, see library.block): by the import that saved it into the folder if
+        it's still around, as that knows the song's length and everyone credited, else by a
+        new import of that one song. Returns the Import, or None when it is on its way already."""
+        for imp in reversed(list(self.imports.values())):
+            if imp.folder != folder or imp.state not in ('running', 'done'):
+                continue
+            for t in imp.tracks:
+                if (t.track.title, t.track.artist) != (title, artist):
+                    continue
+                item = self.queue.items.get(t.item) if t.item else None
+                if t.state in ('pending', 'searching') or (item and item.status in STOPPABLE):
+                    return None
+                if item:
+                    self.queue.delete(item)   # the new search queues it afresh
+                self._unlink(t)
+                t.state, t.note, t.tries, t.found, t.failed, t.saved = 'pending', '', 0, [], [], False
+                t.searched.clear()
+                imp.next = 0
+                if imp.state == 'done':
+                    imp.state, imp.note, imp.finished = 'running', '', None
+                    imp.run_started, imp.run_done = None, 0
+                log.info('import %r: %s asked for %r again', imp.name, by, t.track.label)
+                self._changed()
+                return imp
+        track = Track(title, artist, album, artists=(artist,) if artist else ())
+        return self.add(f'{title} (again)', formats, folder, by, [track], 0, sources, dj)
+
+    def wanted(self, folder):
+        """{(title, artist): Track} of the songs imported into a folder, as far as the imports
+        are still around: what the Library compares its songs with."""
+        out = {}
+        for imp in self.imports.values():
+            if imp.folder == folder:
+                for t in imp.tracks:
+                    out[(t.track.title, t.track.artist)] = t.track
+        return out
 
     def cancel(self, imp):
         """Stops searching, and cancels the downloads that haven't started (Restart brings them back)."""
@@ -536,7 +580,7 @@ class Importer:
             except UserError as e:
                 self._failed(t, fmt, e)
                 continue
-            entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album)
+            entry = Entry(cands, fmt, t.track.title, t.track.artist, t.track.album, want=matching.Want.of(t.track))
             try:
                 item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
             except UserError as e:
@@ -552,12 +596,12 @@ class Importer:
         """Queues the song from the files already on the server, if a copy there will do (see
         library.py), so it isn't searched for or downloaded again. False when the import had to stop."""
         order = library.steps(imp.formats, imp.sources)
-        cands = self.engine.library.find(t.track.query, order, t.track.duration)
+        cands = self.engine.library.find(t.track.query, order, t.track.duration, t.track)
         if not cands:
             return True
         c = cands[0]
         step = c.fmt if c.fmt in imp.formats and c.origin not in matching.ELSEWHERE else c.origin
-        entry = Entry(cands, c.fmt, t.track.title, t.track.artist, t.track.album)
+        entry = Entry(cands, c.fmt, t.track.title, t.track.artist, t.track.album, want=matching.Want.of(t.track))
         try:
             item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
         except UserError as e:
@@ -584,7 +628,8 @@ class Importer:
         if not cands:
             t.searched.add(source)
             return True
-        entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album)
+        entry = Entry(cands, cands[0].fmt, t.track.title, t.track.artist, t.track.album,
+                      want=matching.Want.of(t.track))
         try:
             item = self.queue.add_one(entry, imp.folder, imp.by, imp.dj)
         except UserError as e:
@@ -633,6 +678,7 @@ class Importer:
                     item = self.queue.items.get(t.item)
                     if item:
                         self._link(imp, t, item)
+                        self._recheck(imp, t, item)
                     continue
                 if t.state != 'found':
                     continue
@@ -643,9 +689,36 @@ class Importer:
                 if imp.state in ('paused', 'cancelled') and item.status == 'queued':
                     self.queue.pause(item)
                     held += 1
+                self._recheck(imp, t, item)
                 self.dirty = True
         if held:
             log.info('held back %d queued song(s) of paused imports', held)
+
+    def _recheck(self, imp, t, item):
+        """A song still waiting to download whose copies were picked before the checks of
+        matching.fit existed: only the copies that pass them are kept, and it's measured
+        against the playlist's length like any other. With none left it is looked for again
+        (when its import runs: a paused one's stays pending until then)."""
+        if item.checked or item.status == 'done':
+            return
+        item.checked = True
+        item.want = matching.Want.of(t.track)
+        kept = [c for c in item.cands if self.engine.still_suits(c, t.track)]
+        if kept and len(kept) == len(item.cands) and item.status == 'failed':
+            return
+        if kept:
+            item.cands = kept
+            self.queue.dirty = True
+            return
+        log.info('import %r: the copies found for %r before aren\'t the song; it will be looked for again',
+                 imp.name, t.track.label)
+        self._unlink(t)
+        self.queue.delete(item)
+        t.state, t.note, t.found, t.failed, t.tries, t.saved = 'pending', '', [], [], 0, False
+        imp.next = 0
+        if imp.state == 'done':
+            imp.state, imp.finished = 'running', None
+            imp.run_started, imp.run_done = None, 0
 
     def save(self):
         if not self.dirty:

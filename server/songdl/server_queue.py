@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 
 from . import matching
-from .engine import LOW_DISK, STAGING, Engine
+from .engine import LOW_DISK, STAGING, Engine, clock
 from .errors import UserError
 from .jobs import ILLEGAL, file_stem
 from .slskd import SlskdError
@@ -77,10 +77,36 @@ def dj_folder(name):
     return playlist_folder(name)[:MAX_FOLDER - len(DJ_FOLDER)].rstrip(' .') + DJ_FOLDER
 
 
+def got(cand: matching.Candidate):
+    """What is kept of the copy a song was saved from, once the copies themselves are dropped:
+    enough to see afterwards what a file in a playlist's folder really is."""
+    local = cand.source == 'local'
+    return {
+        'name': (cand.meta.get('name') if local else None) or cand.filename,
+        'source': (cand.origin if local else cand.source) or 'soulseek',
+        'from': cand.meta.get('from') if local else (cand.username if cand.source != 'soulseek' else None),
+        'link': cand.meta.get('link') if local else cand.url,
+        'length': cand.length, 'measured': cand.measured, 'fit': cand.fit or None,
+    }
+
+
+def check_note(g, duration=None):
+    """Why a saved song is worth a listen, or ''."""
+    if not g or g.get('fit') != 'longer':
+        return ''
+    played = g.get('measured') or g.get('length')
+    if played and duration:
+        return f'A longer version: {clock(played)}, and the playlist\'s is {clock(duration)}'
+    return 'A longer version than the playlist\'s'
+
+
 class QueueItem:
-    def __init__(self, entry_id, cands, title, artist, album, fmt, folder, by, dj=False):
+    def __init__(self, entry_id, cands, title, artist, album, fmt, folder, by, dj=False, want=None):
         self.id = entry_id
         self.dj = dj   # saved as a CDJ copy (dj.py)
+        self.want = want   # a matching.Want: the playlist's length for the song
+        self.checked = True   # its copies were picked by the checks of matching.fit (False: by an older version)
+        self.got = None    # the copy it was saved from (see got), once it's done
         self.cands = cands
         self.title, self.artist, self.album = title, artist, album
         self.format = fmt
@@ -122,22 +148,33 @@ class QueueItem:
             'note': self.note,
             'created': self.created,
             'finished': self.finished,
+            'check': self.check,
+            'original': self.got.get('name', '').replace('\\', '/').rsplit('/', 1)[-1] if self.got else None,
         }
+
+    @property
+    def check(self):
+        """Why the saved song is worth a listen, or ''."""
+        return check_note(self.got, self.want.duration if self.want else None) if self.status == 'done' else ''
 
     def to_dict(self):
         return {
             'id': self.id, 'title': self.title, 'artist': self.artist, 'album': self.album,
             'format': self.format, 'folder': self.folder, 'by': self.by, 'status': self.status, 'dj': self.dj,
             'size': self.size, 'note': self.note, 'created': self.created, 'finished': self.finished,
-            'gone': self.gone,
+            'gone': self.gone, 'got': self.got, 'checked': self.checked,
+            'duration': self.want.duration if self.want else None, 'exact': bool(self.want and self.want.exact),
             # A finished song never needs its copies again
             'cands': [] if self.status == 'done' else [c.to_dict() for c in self.cands[:KEPT_COPIES]],
         }
 
     @classmethod
     def from_dict(cls, d):
+        want = matching.Want(d['duration'], bool(d.get('exact'))) if d.get('duration') else None
         item = cls(d['id'], [matching.Candidate.from_dict(c) for c in d.get('cands') or []], d['title'], d['artist'],
-                   d.get('album') or '', d['format'], d['folder'], d['by'], bool(d.get('dj')))
+                   d.get('album') or '', d['format'], d['folder'], d['by'], bool(d.get('dj')), want)
+        item.got = d.get('got') if isinstance(d.get('got'), dict) else None
+        item.checked = bool(d.get('checked'))
         item.status, item.size, item.note = d['status'], d.get('size'), d.get('note') or ''
         item.created, item.finished = d['created'], d.get('finished')
         item.gone = d['gone'] if 'gone' in d else item.status == 'failed' and gone_note(item.note)
@@ -179,7 +216,7 @@ class ServerQueue:
         items, queued = [], 0
         for entry in entries:
             item = QueueItem(uuid.uuid4().hex, list(entry.cands[:KEPT_COPIES]), entry.title, entry.artist,
-                             entry.album, entry.fmt, folder, by, dj)
+                             entry.album, entry.fmt, folder, by, dj, getattr(entry, 'want', None))
             key = (item.label.lower(), item.format, folder, dj)
             if key in busy:
                 items.append(busy[key])
@@ -363,7 +400,7 @@ class ServerQueue:
             if self.engine.low_disk():
                 raise UserError(LOW_DISK)
             try:
-                fetch = await self.engine.download(item.cands, update)
+                fetch = await self.engine.download(item.cands, update, want=item.want)
             except UserError as e:
                 self._fail(item, str(e), gone=e.status != 503)
                 return
@@ -377,7 +414,9 @@ class ServerQueue:
                     await asyncio.to_thread(self.engine.forget, fetch)
                 note = f'Saved as {name}'
             item.size = (await asyncio.to_thread((dest / name).stat)).st_size
-            self._finish(item, note)
+            item.got = got(fetch.cand)
+            doubt = check_note(item.got, item.want.duration if item.want else None)
+            self._finish(item, f'{note}. {doubt}' if doubt else note)
             log.info('saved %s', dest / name)
             self.engine.schedule_rescan()
         except asyncio.CancelledError:
@@ -402,7 +441,8 @@ class ServerQueue:
         copy = await self.engine.dj.copy(fetch.path, stem, item.title, item.artist, item.album)
         name = await asyncio.to_thread(_save_to, copy.path, dest, stem)
         if copy.made:
-            self.engine.library.add_dj(dest / name, item.title, item.artist, item.album, True, copy.label)
+            self.engine.library.add_dj(dest / name, item.title, item.artist, item.album, True, copy.label,
+                                       (fetch.path, fetch.cand))
         else:   # the original itself (a CBR MP3), so it's a copy like any other
             self.engine.library.add(dest / name, item.title, item.artist, item.album, fetch.cand)
         return name, copy.label

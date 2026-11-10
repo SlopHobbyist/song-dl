@@ -1805,6 +1805,8 @@
     if (imp.waiting) parts.push(count(imp.waiting) + ' waiting to download');
     if (imp.paused) parts.push(count(imp.paused) + ' downloads paused');
     if (imp.failed) parts.push(count(imp.failed) + ' failed to download');
+    /* Saved, but a longer version than the playlist's: listed in the Library to listen to */
+    if (imp.check) parts.push(count(imp.check) + ' to check in Library');
     if (imp.skipped) parts.push(imp.skipped + ' row' + (imp.skipped === 1 ? '' : 's') + ' without a song name skipped');
     if (imp.state === 'running') parts.push(formatEta(imp.eta));
     setText($('[data-summary]', el), parts.filter(Boolean).join(' · '));
@@ -2207,6 +2209,8 @@
     var search = $('#library-search');
     var dialog = $('#dlg-delete');
     var playlistDialog = $('#dlg-delete-playlist');
+    var wrongDialog = $('#dlg-wrong');
+    var pendingWrong = null;
     var pendingDelete = null;
     var pendingPlaylist = null;
     var counts = {};   /* playlist name -> its songs, for the delete dialog */
@@ -2217,19 +2221,34 @@
       return '?playlist=' + encodeURIComponent(name) + (path === undefined ? '' : '&path=' + encodeURIComponent(path));
     }
 
+    /* Where a song's file came from: the name it was downloaded under, which is the only place a
+       wrong song shows (in the folder every file is named after the playlist's song) */
+    function originText(song) {
+      if (!song.original) return '';
+      var where = { soundcloud: 'SoundCloud', youtube: 'YouTube', soulseek: 'Soulseek' }[song.source] || '';
+      return 'Downloaded as ' + song.original + (where ? ' · ' + where + (song.from ? ' (' + song.from + ')' : '') : '');
+    }
+
     function songRow(name, song) {
       var label = (song.artist ? song.artist + ' - ' : '') + song.title;
       var detail = streamText(song);
       var tags = song.format + ' · ' + bitrateText(song);
-      return '<tr data-path="' + escapeHtml(song.path) + '">' +
+      var origin = originText(song);
+      return '<tr data-path="' + escapeHtml(song.path) + '"' + (song.check ? ' data-check' : '') + '>' +
         '<td><div class="song-cell"><span class="text-medium" data-name>' + escapeHtml(song.title) + '</span>' +
           '<span class="text-caption text-muted">' + escapeHtml(song.artist || 'Unknown artist') + (song.dj ? ' · DJ' : '') + '</span>' +
+          (song.check ? '<span class="text-caption text-warning song-check"><span class="icon icon-sm" aria-hidden="true">warning</span> ' +
+            '<span>Check this one: ' + escapeHtml(song.check) + '</span></span>' : '') +
+          (origin ? '<span class="text-caption text-muted song-origin">' + escapeHtml(origin) + '</span>' : '') +
           '<span class="text-caption text-muted show-sm-only">' + escapeHtml(tags) + '</span></div></td>' +
         '<td class="hide-sm">' + escapeHtml(song.format) + '</td>' +
         '<td class="table-numeric hide-sm"' + (detail ? ' title="' + escapeHtml(detail) + '"' : '') + '>' + escapeHtml(bitrateText(song)) + '</td>' +
         '<td class="row-actions">' +
           '<a class="button button-icon button-icon-sm" href="/api/library/file' + escapeHtml(query(name, song.path)) + '" download' +
             ' aria-label="Download ' + escapeHtml(label) + '" title="Download"><span class="icon icon-sm">download</span></a>' +
+          '<button class="button button-icon button-icon-sm" type="button" data-action="wrong-song"' +
+            ' aria-label="' + escapeHtml(label) + ' is the wrong song" title="Wrong song: delete it and look again">' +
+            '<span class="icon icon-sm">sync_problem</span></button>' +
           '<button class="button button-icon button-icon-sm" type="button" data-action="delete-song"' +
             ' aria-label="Delete ' + escapeHtml(label) + '" title="Delete"><span class="icon icon-sm">delete</span></button>' +
         '</td></tr>';
@@ -2242,7 +2261,17 @@
         body.innerHTML = '<p class="text-body-2 text-muted">No songs in this playlist.</p>';
         return;
       }
-      body.innerHTML = '<div class="library-scroll">' +
+      /* The songs whose file may not be the playlist's song, and a switch to see only those */
+      var doubts = songs.filter(function (song) { return song.check; }).length;
+      var only = doubts > 0 && panel.hasAttribute('data-only-check');
+      panel.toggleAttribute('data-only-check', only);
+      var bar = !doubts ? '' : '<div class="library-check" role="status">' +
+        '<span class="icon icon-sm text-warning" aria-hidden="true">warning</span>' +
+        '<span class="text-body-2 grow">' + count(doubts) + (doubts === 1 ? ' song' : ' songs') + ' to check: the file ' +
+          (doubts === 1 ? 'it was' : 'they were') + ' downloaded as may not be the playlist\'s song.</span>' +
+        '<button class="button button-outlined button-sm" type="button" data-action="only-check" aria-pressed="' + only + '">' +
+          (only ? 'Show all songs' : 'Show only these') + '</button></div>';
+      body.innerHTML = bar + '<div class="library-scroll">' +
         '<table class="table table-hover library-table">' +
         '<caption class="visually-hidden">Songs in ' + escapeHtml(name) + '</caption>' +
         '<thead><tr><th scope="col">Song</th><th scope="col" class="hide-sm col-format">Format</th>' +
@@ -2425,12 +2454,58 @@
         UI.openDialog('dlg-delete-playlist');
         return;
       }
+      var onlyCheck = event.target.closest('[data-action="only-check"]');
+      if (onlyCheck) {
+        var checkPanel = onlyCheck.closest('.panel');
+        checkPanel.toggleAttribute('data-only-check');
+        loadSongs(checkPanel).then(function () {
+          var again = $('[data-action="only-check"]', checkPanel);
+          if (again) again.focus();
+        });
+        return;
+      }
+      var wrong = event.target.closest('[data-action="wrong-song"]');
+      if (wrong) {
+        var wrongRow = wrong.closest('tr');
+        pendingWrong = { panel: wrong.closest('.panel'), row: wrongRow };
+        $('#dlg-wrong-name').textContent = $('[data-name]', wrongRow).textContent;
+        var origin = $('.song-origin', wrongRow);
+        setText($('#dlg-wrong-origin'), origin ? origin.textContent + '.' : '');
+        UI.openDialog('dlg-wrong');
+        return;
+      }
       var button = event.target.closest('[data-action="delete-song"]');
       if (!button) return;
       var row = button.closest('tr');
       pendingDelete = { panel: button.closest('.panel'), row: row };
       $('#dlg-delete-name').textContent = $('[data-name]', row).textContent;
       UI.openDialog('dlg-delete');
+    });
+
+    /* Wrong song: the file goes, that copy is never taken for the song again, and the song is
+       looked for again into the same playlist */
+    wrongDialog.addEventListener('close', async function () {
+      var target = pendingWrong;
+      pendingWrong = null;
+      if (wrongDialog.returnValue !== 'replace' || !target) return;
+      var row = target.row, panel = target.panel;
+      var name = $('[data-name]', row).textContent;
+      var next = row.nextElementSibling || row.previousElementSibling;
+      var nextPath = next && next.getAttribute('data-path');
+      try {
+        var res = await api('POST', '/api/library/wrong',
+          { playlist: panel.getAttribute('data-name'), path: row.getAttribute('data-path') });
+        toast('Deleted "' + name + '". ' + (res.searching
+          ? 'Looking for the right one; follow along on Downloads.'
+          : 'It is being looked for already.'), 'success');
+      } catch (e) {
+        toast(e.message, 'danger');
+      }
+      await loadSongs(panel);
+      try { await loadPlaylists(); } catch (e) {}
+      var again = nextPath && $$('tr', panel).filter(function (r) { return r.getAttribute('data-path') === nextPath; })[0];
+      var focus = again ? $('[data-action="wrong-song"]', again) : $('.panel-summary', panel);
+      if (focus && focus.isConnected) focus.focus();
     });
 
     dialog.addEventListener('close', async function () {

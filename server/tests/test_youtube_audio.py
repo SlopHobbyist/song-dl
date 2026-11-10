@@ -119,7 +119,14 @@ def test_a_remix_is_kept_when_it_was_asked_for():
 def test_the_playlists_length_picks_the_recording():
     same = score(video('a' * 11, 'Daft Punk - Digital Love', 'Daft Punk', 300), 'Daft Punk Digital Love', 'Daft Punk', 'Digital Love', 301)
     edit = score(video('b' * 11, 'Daft Punk - Digital Love', 'Daft Punk', 241), 'Daft Punk Digital Love', 'Daft Punk', 'Digital Love', 301)
-    assert same[0] > edit[0] and not same[1] and edit[1]
+    # A shorter one is another recording, whoever uploaded it; a longer one is only the song (its
+    # extended version) on the artist's own channel, and never when the playlist has both versions
+    longer = video('c' * 11, 'Daft Punk - Digital Love', 'Daft Punk', 420)
+    fan = video('d' * 11, 'Daft Punk - Digital Love', 'Some Fan', 420)
+    assert same[0] is not None and not same[1] and edit == (None, False)
+    assert score(longer, 'Daft Punk Digital Love', 'Daft Punk', 'Digital Love', 301)[1] is True
+    assert score(fan, 'Daft Punk Digital Love', 'Daft Punk', 'Digital Love', 301) == (None, False)
+    assert score(longer, 'Daft Punk Digital Love', 'Daft Punk', 'Digital Love', 301, exact=True) == (None, False)
 
 
 def provided(vid, title, artists, duration, label='echo cult'):
@@ -151,7 +158,7 @@ async def test_youtube_is_asked_for_the_auto_generated_upload_when_nothing_fits(
     yt.topic_results = [provided('b' * 11, 'On My Mind', ['Alcanza'], 286, 'Symphonic Distribution')]
     cands = await youtube_audio.YouTubeAudio(None).find('Alcanza On My Mind', 'Alcanza', 'On My Mind', 286)
     assert yt.searches == ['Alcanza On My Mind', 'Alcanza On My Mind topic']
-    assert cands[0].url.endswith('b' * 11) and cands[1].url.endswith('a' * 11)
+    assert [c.url[-11:] for c in cands] == ['b' * 11]   # (the short clip is no copy to fall back on)
 
     # A search that has the song needs no second one
     yt.searches.clear()

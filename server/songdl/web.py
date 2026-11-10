@@ -24,7 +24,7 @@ from .collection import Collection
 from .auth import COOKIE, FAIL_DELAY, Auth
 from .engine import STAGING
 from .errors import UserError
-from .server_queue import STOPPABLE, ServerQueue, normalize_folder
+from .server_queue import DJ_FOLDER, STOPPABLE, ServerQueue, normalize_folder
 
 log = logging.getLogger('songdl')
 
@@ -156,6 +156,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     limiter = RateLimiter(cfg.rate_limit)
     importer = imports.Importer(cfg, manager.engine, queue)
     collection = Collection(cfg, manager.engine.library)
+    collection.wanted = importer.wanted   # the playlists' own songs, to compare the saved ones with
     zips = {}   # token -> (time made, [download job ids], name)
     readers = links.Readers()
     playlist_links = sync.Links(cfg)
@@ -560,6 +561,25 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         log.info('%s deleted %r from the playlist %r', user, rel, name)
         return web.json_response({'ok': True})
 
+    async def library_wrong(request):
+        """{playlist, path}: the song isn't the one its name says. It is deleted, the copy it
+        was downloaded from is never taken for that song again, and the song is looked for
+        again, into the same playlist."""
+        user = require_admin(request)
+        data = await read_json(request)
+        name = collection._folder(data.get('playlist')).name   # 404 when it isn't one
+        song = await collection.wrong(name, data.get('path'))
+        log.info('%s called %r in the playlist %r the wrong song', user, data.get('path'), name)
+        link = playlist_links.get(name) or {}
+        sources = [s for s in link.get('sources') or () if s in matching.SOURCES] or list(matching.SOURCES)
+        formats = [f for f in link.get('formats') or () if f in matching.FORMATS] or ['wav', 'flac']
+        dj = bool(song['dj']) or name.endswith(DJ_FOLDER)
+        imp = None
+        if normalize_folder(name) == name:   # (a folder made by hand may have a name an import can't save into)
+            imp = importer.search_again(name, song['title'], song['artist'], song.get('album') or '', user,
+                                        formats, sources, dj)
+        return web.json_response({'ok': True, 'searching': imp is not None, 'title': song['title']})
+
     async def library_delete_playlist(request):
         """Deletes a whole playlist: its folder, its songs, and the link it syncs with. Not
         while songs are still on their way into it, or they'd make it again."""
@@ -648,6 +668,7 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
         web.get('/api/library/file', library_file),
         web.get('/api/library/zip', library_zip),
         web.delete('/api/library/song', library_delete),
+        web.post('/api/library/wrong', library_wrong),
         web.delete('/api/library/playlist', library_delete_playlist),
         web.post('/api/library/sync', library_sync),
         web.get('/api/health', health),
@@ -659,10 +680,10 @@ def build_app(cfg, manager: jobs.Manager, queue: ServerQueue, captcha=None):
     async def background(app):
         if not auth.enabled:
             log.warning('webserver.admins is empty: the Server and All pages are turned off')
+        manager.engine.library.load()   # first: the importer checks waiting songs against it
         queue.load()
         importer.load()
         playlist_links.load()
-        manager.engine.library.load()
         await manager.engine.slskd.start()
         tasks = [
             asyncio.create_task(housekeeping(cfg, manager, queue, limiter, auth)),

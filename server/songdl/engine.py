@@ -20,7 +20,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 
-from . import dj, matching, soundcloud_audio, youtube_audio
+from . import dj, library, matching, soundcloud_audio, youtube_audio
 from .library import Library
 from .errors import UserError
 from .slskd import Slskd, SlskdError
@@ -42,7 +42,7 @@ MIN_FREE_BYTES = 2 * 10**9    # refuse new downloads when the disk has less room
 ASKED_WINDOW = 30 * 60        # seconds after asking an uploader for a file that we'll answer their captcha
 MOVE_WAIT = 30                # seconds a finished download may take to show up in its folder...
 MOVE_SETTLE = 5               # ...and to stop growing once it has
-LENGTH_TOLERANCE = 8          # seconds a copy may differ from the length in the CSV and still be preferred
+LENGTH_TOLERANCE = matching.LENGTH_TOLERANCE   # seconds a copy may differ from the playlist's length
 # The Soulseek server bans clients that search too fast (for about 30 minutes). These are
 # slsk-batchdl's long-standing safe defaults: at most 34 searches in any 220 seconds.
 SEARCHES_PER_WINDOW = 34
@@ -61,6 +61,10 @@ STAGING = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 def mb(n):
     return f'{n / 1e6:.1f} MB'
+
+
+def clock(seconds):
+    return f'{int(seconds) // 60}:{int(seconds) % 60:02d}'
 
 
 class Fetch:
@@ -83,6 +87,8 @@ class Fetch:
         self.observers = 0
         self.task = None
         self.cancelled = False       # tells a YouTube download, which runs in a thread, to stop
+        self.checked = False         # its real length has been measured...
+        self.played = None           # ...and is this many seconds (None when it couldn't be)
 
     @property
     def key(self):
@@ -254,56 +260,96 @@ class Engine:
             await asyncio.sleep(0.25)
 
     async def find_track(self, track, fmt, status=None, priority=SCAN):
-        """Searches Soulseek for a song of a playlist and returns the ranked
-        copies, or raises UserError('No match found')."""
-        cands = (await self.search(track.query, fmt, status, priority)).candidates
-        if not cands and track.artist:
-            # Soulseek blocks searches for some artists. Search the title alone and
-            # keep only files whose path mentions the artist.
-            wanted = set(matching.tokens(track.artist))
-            alone = (await self.search(track.title_query, fmt, status, priority)).candidates
-            cands = [c for c in alone if wanted & set(matching.tokens(c.filename))]
-        # A remix is only acceptable if the playlist asks for one
-        cands = [c for c in cands if c.relevance >= 1]
+        """Searches Soulseek for a song of a playlist and returns the copies that are that
+        song (see matching.fit), best first, or raises UserError('No match found')."""
+        found = (await self.search(track.query, fmt, status, priority)).candidates
+        if not found and track.artist:
+            # Soulseek blocks searches for some artists. Search the title alone; the copies
+            # still have to name the artist, like any other
+            found = (await self.search(track.title_query, fmt, status, priority)).candidates
+        cands = self.suited(found, track)
+        log.info('soulseek search %r (%s): %d of %d files are the song', track.query, fmt, len(cands), len(found))
         if not cands:
             raise UserError('No match found')
-        if track.duration:
-            # Stable, so the ranking is kept within each group
-            cands.sort(key=lambda c: not (c.length and abs(c.length - track.duration) <= LENGTH_TOLERANCE))
         return cands
+
+    def suited(self, cands, track):
+        """The copies that are the playlist's song, in the order to try them: the ones of the
+        playlist's length, then the ones that don't say how long they are (they're measured
+        once they're here). A longer version is only taken when there is nothing else, and
+        never mixed in with the others: a busy uploader mustn't mean a different version."""
+        first, unknown, longer = [], [], []
+        for c in cands:   # ranked already; the order is kept within each group
+            how = matching.fit(c.filename, c.length, track)
+            if how is None or self.library.is_blocked(track.title, track.artist, c):
+                continue
+            c.fit = how
+            (longer if how == 'longer' else unknown if how == 'unknown' else first).append(c)
+        if not track.duration:
+            first.sort(key=lambda c: c.outlier)   # no length to go by but the other copies'
+        return first + unknown or longer
+
+    def still_suits(self, cand, track):
+        """Whether a copy found before these checks existed (it waited in the queue through an
+        update) would be taken for the playlist's song now."""
+        if self.library.is_blocked(track.title, track.artist, cand):
+            return False
+        if cand.source == 'local':
+            rec = self.library.songs.get(cand.filename)
+        else:
+            rec = {'origin': cand.source, 'name': cand.filename, 'length': cand.length,
+                   'from': cand.username if cand.source != 'soulseek' else None}
+        how = library.suits(rec, track) if rec else None
+        if how:
+            cand.fit = how
+        return bool(how)
 
     async def find_elsewhere(self, source, track, status=None, more=False):
         """The copies of a playlist's song on SoundCloud or YouTube, best first, or []. `more`:
         somewhere else will be tried after."""
         if status:
             status(f'Searching {matching.SOURCE_LABELS[source]}')
-        return await self.elsewhere[source].find(track.query, track.artist, track.title, track.duration,
-                                                 more=more)
+        cands = await self.elsewhere[source].find(
+            track.query, track.artist, track.title, track.duration, more=more,
+            artists=matching.credited(track), exact=matching.wants_exact(track))
+        return [c for c in cands if not self.library.is_blocked(track.title, track.artist, c)]
 
     # Download
 
-    async def download(self, cands, update=None, skip=None):
+    async def download(self, cands, update=None, skip=None, want=None):
         """Fetches the first copy that works and returns its Fetch (see
         fetch.path). `update(progress, speed, note)` is called as it goes;
         progress is 0..1 or None. `skip` (a Skip) lets the visitor give up on the
-        copy being fetched for the next one. Raises UserError when no copy works."""
+        copy being fetched for the next one. `want` (a matching.Want) is what the
+        playlist says of the song: a copy that turns out to be another length is
+        thrown away and the next one tried. Raises UserError when no copy works."""
         cands = cands[:MAX_ATTEMPTS]
         last = len(cands) - 1
+        problem = None
         for i, cand in enumerate(cands):
             retried = False
             while True:
                 fetch = self._fetch(cand)
                 fetch.observers += 1
                 cancel = None
+                wrong = None
                 try:
                     if skip:
                         skip.more = i < last
                     if await self._watch(fetch, i == last, i, update, skip):
-                        return fetch
+                        wrong = await self._wrong(fetch, want, update)
+                        if not wrong:
+                            return fetch
                 finally:
                     fetch.observers -= 1
                     if fetch.active and not fetch.observers:
                         cancel = self.spawn(self._cancel(fetch))
+                if wrong:
+                    problem = wrong
+                    log.info('copy from %s thrown away: %s', cand.username, wrong)
+                    if not fetch.observers:
+                        await asyncio.to_thread(self.forget, fetch)
+                    break
                 if skip and skip.event.is_set():
                     skip.event.clear()
                     log.info('visitor skipped the copy from %s', cand.username)
@@ -319,6 +365,9 @@ class Engine:
                     await cancel
                 if self.fetches.get(fetch.key) is fetch:
                     del self.fetches[fetch.key]
+        if problem:
+            # (502: no use trying these copies again; an import looks elsewhere)
+            raise UserError(f'Not saved: {problem}.', 502)
         if cands and cands[0].source != 'soulseek' and all(c.source == cands[0].source for c in cands):
             where = matching.SOURCE_LABELS[cands[0].source]
             reason = fetch.error if fetch.error and fetch.error != 'Cancelled' else ''
@@ -334,6 +383,28 @@ class Engine:
         raise UserError('Couldn\'t get the file from any uploader. Please try again later, or search again.'
                         if len(cands) > 1 else
                         'Couldn\'t get the file from the uploader. Please try again later, or search again.')
+
+    async def _wrong(self, fetch: Fetch, want, update=None):
+        """What is wrong with a downloaded file, going by how long it really plays, or None.
+        Names can't tell a song from its 30-second preview or its extended version; this can."""
+        if not fetch.checked:
+            if update:
+                update(1.0, None, 'Checking its length')
+            fetch.played = await asyncio.to_thread(dj.played, fetch.path)
+            fetch.checked = True
+        cand = fetch.cand
+        if fetch.played is None:
+            return None
+        played = cand.measured = round(fetch.played)
+        # (MP3s are left out: Soulseek clients guess the length of a variable-bitrate one)
+        if cand.length and played < cand.length - LENGTH_TOLERANCE and not (cand.source == 'soulseek' and cand.fmt == 'mp3'):
+            return f'only {clock(played)} of it plays, and the file said {clock(cand.length)}'
+        if want and want.duration:
+            how = matching.length_fit(played, want.duration, want.exact)
+            if how is None:
+                return (f'it plays for {clock(played)}, and the playlist\'s version is {clock(want.duration)}')
+            cand.fit = how
+        return None
 
     async def _captcha_answered(self, fetch: Fetch):
         if not self.captcha or fetch.cand.source != 'soulseek':

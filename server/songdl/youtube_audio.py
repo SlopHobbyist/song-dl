@@ -41,7 +41,7 @@ DOWNLOAD_TIMEOUT = 15 * 60
 MIN_SECONDS = 30
 MAX_SECONDS = 20 * 60   # longer is a full album, a loop or a mix
 LENGTH_CLOSE = 5        # seconds a video may differ from the song's length and count as the same recording
-LENGTH_FAR = 30         # ...and past this it's another recording
+LENGTH_FAR = 30         # ...and past this it's another recording, when nobody said whose song it is
 FORMAT = 'bestaudio/best'
 VIDEO_ID = re.compile(r'^[A-Za-z0-9_-]{11}$')
 # A download that fails for one of these (a DNS or network hiccup) is tried again after each delay
@@ -84,11 +84,29 @@ def credits(entry):
     return text.split('℗')[0] if PROVIDED.match(text) else ''
 
 
-def score(entry, query, artist='', title='', duration=None):
+def uploader_is(artists, channel):
+    """Whether the channel or account is one of the artists' own: "Daft Punk", "Daft Punk -
+    Topic", "DaftPunkVEVO"."""
+    ch = _norm(matching.fold(TOPIC.sub('', channel)))
+    for artist in artists:
+        name = _norm(matching.fold(artist))
+        if name and (ch in (name, name + 'vevo', name + 'official', name + 'music') or (len(name) >= 4 and name in ch)):
+            return True
+    return False
+
+
+def score(entry, query, artist='', title='', duration=None, artists=(), exact=False):
     """How likely a search result is the song: a number, higher is better, or
-    None when it isn't the song at all. `artist`, `title` and `duration` come
-    from a playlist; a typed search only has the query. Also returns whether
-    the length disagrees with the playlist's."""
+    None when it isn't the song at all. `artist`, `title`, `duration` and
+    `artists` (everyone credited) come from a playlist; a typed search only has
+    the query. Also returns whether it is a longer version than the playlist's.
+
+    For a playlist's song the upload has to name one of its artists (in its
+    title, its uploader or YouTube's credits), in the version asked for, and
+    be the playlist's length. Only an artist's own upload may be longer (an
+    extended version, when `exact` doesn't rule that out), never shorter: a
+    song of the same name by somebody else is the usual wrong pick, and it is
+    almost never the same length."""
     name = ' '.join((entry.get('title') or '').split())
     channel = ' '.join((entry.get('channel') or entry.get('uploader') or '').split())
     length = entry.get('duration')
@@ -110,7 +128,21 @@ def score(entry, query, artist='', title='', duration=None):
     if named and len(named & _words(name)) < (len(named) if len(named) < 4 else math.ceil(len(named) * 0.8)):
         return None, False
     wanted = _words(query)
+    everyone = tuple(a for a in (artists or (artist,)) if a)
+    # (A remixer the title names is one of them, credited as an artist or not: "STRIPES Remix")
+    remixer = bool(title and matching.key_words(channel) and set(matching.key_words(channel)) <= set(matching.words(title)))
+    theirs = uploader_is(everyone, channel) or remixer
+    if everyone:
+        said = set(matching.words(name)) | set(matching.words(channel)) | set(matching.words(credited))
+        if not theirs and not matching.artist_share(everyone, said):
+            return None, False
+        # Whose it is has been settled, by any of the artists (a remix is often on its remixer's
+        # account): what was typed only has to cover the rest
+        wanted = (wanted - _words(artist)) or wanted
     if wanted and len(wanted & text) < max(1, math.ceil(len(wanted) * 0.75)):
+        return None, False
+    # "Dosem Mix" isn't the "Victor Simonelli Club Mix": every word that says which version
+    if title and not matching.title_parts(title)[1] <= set(matching.words(name)):
         return None, False
     # A remix, live take, cover... is only the song if it was asked for
     asked = wanted | _words(title)
@@ -139,6 +171,11 @@ def score(entry, query, artist='', title='', duration=None):
         off = abs(length - duration)
         if off <= LENGTH_CLOSE:
             points += 3
+        elif everyone:
+            if off > matching.LENGTH_TOLERANCE:
+                if not theirs or matching.length_fit(round(length), duration, exact) != 'longer':
+                    return None, False
+                outlier = True
         elif off > LENGTH_FAR:
             points -= 3
             outlier = True
@@ -156,6 +193,7 @@ def candidate(entry, meta, outlier=False):
         bit_depth=None, sample_rate=None, free_slot=True, queue=0, speed=0, fmt='opus',
         source='youtube', url=WATCH_URL.format(id=vid))
     c.outlier = outlier
+    c.fit = 'longer' if outlier else ''
     c.meta = dict(meta)
     return c
 
@@ -290,16 +328,16 @@ class YouTubeAudio:
             raise UserError('Couldn\'t search YouTube. Please try again in a minute.', passing(e))
 
     @staticmethod
-    def _score(entries, query, artist, title, duration):
+    def _score(entries, query, artist, title, duration, artists=(), exact=False):
         """[(points, outlier, entry)] of the entries that might be the song."""
         scored = []
         for entry in entries:
-            points, outlier = score(entry, query, artist, title, duration)
+            points, outlier = score(entry, query, artist, title, duration, artists, exact)
             if points is not None:
                 scored.append((points, outlier, entry))
         return scored
 
-    async def find(self, query, artist='', title='', duration=None, video=None, more=False):
+    async def find(self, query, artist='', title='', duration=None, video=None, more=False, artists=(), exact=False):
         """The videos that are the song, best first, the first with its quality
         read; [] when YouTube has none. `video` is a video ID to take as is."""
         async with self.searches:
@@ -309,7 +347,7 @@ class YouTubeAudio:
                 picks = [({'id': video, 'title': '', 'duration': None}, False)]
             else:
                 entries = await self._search(query)
-                scored = self._score(entries, query, artist, title, duration)
+                scored = self._score(entries, query, artist, title, duration, artists, exact)
                 if not any(not outlier for _, outlier, _ in scored):
                     # Nothing the right length. YouTube ranks a song's own auto-generated upload
                     # ("Artist - Topic", "Provided to YouTube by...") low for some songs, but
@@ -317,7 +355,7 @@ class YouTubeAudio:
                     seen = {e.get('id') for e in entries}
                     extra = [e for e in await self._search(query + ' topic') if e.get('id') not in seen]
                     entries += extra
-                    scored += self._score(extra, query, artist, title, duration)
+                    scored += self._score(extra, query, artist, title, duration, artists, exact)
                 scored.sort(key=lambda s: (not s[1], s[0]), reverse=True)
                 picks = [(entry, outlier) for _, outlier, entry in scored[:KEPT + PROBES]]
                 log.info('youtube search %r: %d of %d videos might be the song', query, len(scored), len(entries))

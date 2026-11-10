@@ -12,7 +12,7 @@ A text file (parse_text) has one song per line, ideally "Artist - Song".
 import csv
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .errors import UserError
 
@@ -40,6 +40,11 @@ class Track:
     artist: str            # main artist only
     album: str = ''
     duration: int | None = None   # seconds
+    # Everyone credited, the main artist first: a remix is often filed under its remixer
+    artists: tuple = field(default=(), compare=False)
+    # The playlist has this song in another version too, so only a copy of this length is it
+    # (set by matching.mark_versions)
+    exact: bool = field(default=False, compare=False)
 
     @property
     def query(self):
@@ -122,6 +127,20 @@ def _main_artist(artists):
     return name.strip()
 
 
+def all_artists(artists):
+    """Everyone in an artists cell, the main artist first: "A; B; C", or "A, B" where the commas
+    aren't part of one name (see _main_artist)."""
+    main = _main_artist(artists)
+    first, *others = [p.strip() for p in re.split(r'[;\n]', artists)]
+    rest = first[len(main):] if first.startswith(main) else ''
+    names = [main] + [p.strip() for p in rest.split(',')] + others
+    out = []
+    for name in names:
+        if name and name.lower() not in [n.lower() for n in out]:
+            out.append(name)
+    return tuple(out)
+
+
 def _finish(tracks, skipped, limit, too_many):
     if not tracks:
         raise UserError('Couldn\'t find any songs in that file.')
@@ -151,12 +170,13 @@ def parse_text(raw: bytes, limit=MAX_TRACKS, too_many=None):
             skipped += 1   # a bare link names no song
             continue
         artist, title = split(line, '')
+        everyone = all_artists(artist)
         artist, title = _main_artist(artist), title or line
         key = (artist.lower(), title.lower())
         if key in seen:
             continue
         seen.add(key)
-        tracks.append(Track(title, artist))
+        tracks.append(Track(title, artist, artists=everyone))
     return _finish(tracks, skipped, limit, too_many)
 
 
@@ -204,5 +224,6 @@ def parse(raw: bytes, limit=MAX_TRACKS, too_many=None):
             continue
         seen.add(key)
         tracks.append(Track(title, artist, cell(row, b_col),
-                            _seconds(cell(row, d_col), header[d_col]) if d_col is not None and d_col < len(header) else None))
+                            _seconds(cell(row, d_col), header[d_col]) if d_col is not None and d_col < len(header) else None,
+                            artists=all_artists(cell(row, a_col))))
     return _finish(tracks, skipped, limit, too_many)

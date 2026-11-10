@@ -31,6 +31,11 @@ def fast(monkeypatch):
     monkeypatch.setattr('songdl.captcha.POLL_SECONDS', 0.1)
     monkeypatch.setattr(engine, 'SEARCHES_PER_WINDOW', 10_000)   # tests search far faster than Soulseek allows
     monkeypatch.setattr('songdl.imports.TICK_SECONDS', 0.1)
+    # The fake library's files are a few hundred KB, far too small for the lengths they give,
+    # and hold no audio to measure; the tests about those checks put real numbers in
+    monkeypatch.setattr('songdl.matching.MIN_FLAC_RATIO', 0)
+    monkeypatch.setattr('songdl.matching.MIN_WAV_RATIO', 0)
+    monkeypatch.setattr('songdl.dj.played', lambda path: None)
 
     # Tests never reach the real SoundCloud or YouTube; the ones about them put a fake in
     def offline(*args):

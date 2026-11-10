@@ -45,6 +45,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -202,6 +203,25 @@ def probe(path: Path):
         'container': fmt.get('format_name') or '',
         'tags': {k.lower(): str(v) for k, v in {**(s.get('tags') or {}), **(fmt.get('tags') or {})}.items()},
     }
+
+
+def played(path: Path):
+    """How many seconds of audio a file really holds, found by decoding all of it: a header
+    can say anything (a 30-second preview has been seen claiming 4:37). None when that
+    can't be told here."""
+    tools = _tools()
+    if not tools:
+        return None
+    try:
+        res = subprocess.run(
+            [tools[0], '-nostdin', '-v', 'error', '-progress', 'pipe:1', '-nostats', '-i', str(path),
+             '-map', '0:a:0', '-vn', '-sn', '-dn', '-f', 'null', '-'],
+            capture_output=True, text=True, timeout=TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    times = re.findall(r'^out_time_(?:us|ms)=(\d+)', res.stdout or '', re.M)
+    seconds = int(times[-1]) / 1e6 if times else 0
+    return seconds if seconds > 0 else None
 
 
 def plan(info, path: Path = None):

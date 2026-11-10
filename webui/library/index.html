@@ -91,6 +91,21 @@
   </div>
 </dialog>
 
+<dialog class="dialog dialog-sm" id="dlg-wrong" aria-labelledby="dlg-wrong-title" aria-describedby="dlg-wrong-body">
+  <div class="dialog-header">
+    <span class="icon text-warning" aria-hidden="true">sync_problem</span>
+    <h2 class="dialog-title" id="dlg-wrong-title">Is this the wrong song?</h2>
+  </div>
+  <div class="dialog-body" id="dlg-wrong-body">
+    <strong id="dlg-wrong-name">This song</strong> will be deleted, and looked for again.
+    The file it came from won't be used for it again. <span class="text-muted" id="dlg-wrong-origin"></span>
+  </div>
+  <div class="dialog-actions">
+    <button class="button button-text" type="button" data-dialog-close="cancel">Cancel</button>
+    <button class="button button-filled" type="button" data-dialog-close="replace">Delete and look again</button>
+  </div>
+</dialog>
+
 <dialog class="dialog dialog-sm" id="dlg-delete-playlist" aria-labelledby="dlg-delete-playlist-title" aria-describedby="dlg-delete-playlist-body">
   <div class="dialog-header">
     <span class="icon text-danger" aria-hidden="true">delete</span>
